@@ -1,146 +1,380 @@
-# DuckDB Extension Template
-This repository contains a template for creating a DuckDB extension. The main goal of this template is to allow users to easily develop, test and distribute their own DuckDB extension. The main branch of the template is always based on the latest stable DuckDB allowing you to try out your extension right away.
+# DuckDB Textplot Extension by [Query.Farm](https://query.farm)
 
-## Getting started
-First step to getting started is to create your own repo from this template by clicking `Use this template`. Then clone your new repository using
-```sh
-git clone --recurse-submodules https://github.com/<you>/<your-new-extension-repo>.git
-```
-Note that `--recurse-submodules` will ensure DuckDB is pulled which is required to build the extension.
+The **Textplot** extension, developed by **[Query.Farm](https://query.farm)**, brings beautiful text-based data visualization directly to your SQL queries in DuckDB. Create stunning ASCII/Unicode charts, bar graphs, and density plots without leaving your database environment.
 
-## Building
-### Managing dependencies
-DuckDB extensions uses VCPKG for dependency management. Enabling VCPKG is very simple: follow the [installation instructions](https://vcpkg.io/en/getting-started) or just run the following:
-```shell
-cd <your-working-dir-not-the-plugin-repo>
-git clone https://github.com/Microsoft/vcpkg.git
-sh ./vcpkg/scripts/bootstrap.sh -disableMetrics
-export VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake
-```
-Note: VCPKG is only required for extensions that want to rely on it for dependency management. If you want to develop an extension without dependencies, or want to do your own dependency management, just skip this step. Note that the example extension uses VCPKG to build with a dependency for instructive purposes, so when skipping this step the build may not work without removing the dependency.
+## Use Cases
 
-### Build steps
-Now to build the extension, run:
-```sh
-make
-```
-The main binaries that will be built are:
-```sh
-./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/<extension_name>/<extension_name>.duckdb_extension
-```
-- `duckdb` is the binary for the duckdb shell with the extension code automatically loaded.
-- `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
-- `<extension_name>.duckdb_extension` is the loadable binary as it would be distributed.
+The Textplot extension is perfect for:
+- **Quick data exploration**: Visualize distributions and trends directly in your terminal
+- **Dashboard creation**: Add visual elements to text-based reports and dashboards
+- **Monitoring and alerting**: Create visual indicators for system metrics and KPIs
+- **Data quality checks**: Spot outliers and patterns in your data instantly
+- **Command-line analytics**: Build beautiful charts for CLI tools and scripts
+- **Documentation**: Include visual data summaries in README files and documentation
+- **Embedded analytics**: Add lightweight visualizations to applications without heavy charting libraries
 
-### Tips for speedy builds
-DuckDB extensions currently rely on DuckDB's build system to provide easy testing and distributing. This does however come at the downside of requiring the template to build DuckDB and its unittest binary every time you build your extension. To mitigate this, we highly recommend installing [ccache](https://ccache.dev/) and [ninja](https://ninja-build.org/). This will ensure you only need to build core DuckDB once and allows for rapid rebuilds.
+## Installation
 
-To build using ninja and ccache ensure both are installed and run:
+**`textplot` is a [DuckDB Community Extension](https://github.com/duckdb/community-extensions).**
 
-```sh
-GEN=ninja make
+You can now use this by using this SQL:
+
+```sql
+install textplot from community;
+load textplot
 ```
 
-## Running the extension
-To run the extension code, simply start the shell with `./build/release/duckdb`. This shell will have the extension pre-loaded.
+## Functions
 
-Now we can use the features from the extension directly in DuckDB. The template contains a single scalar function `textplot()` that takes a string arguments and returns a string:
-```
-D select textplot('Jane') as result;
-┌───────────────┐
-│    result     │
-│    varchar    │
-├───────────────┤
-│ Textplot Jane 🐥 │
-└───────────────┘
-```
+### `tp_bar(value, ...options)`
+Creates horizontal bar charts with customizable styling and colors.
 
-## Running the tests
-Different tests can be created for DuckDB extensions. The primary way of testing DuckDB extensions should be the SQL tests in `./test/sql`. These SQL tests can be run using:
-```sh
-make test
-```
+**Basic Usage:**
+```sql
+-- Simple progress bar (50% filled)
+SELECT tp_bar(0.5);
+┌──────────────────────┐
+│     tp_bar(0.5)      │
+│       varchar        │
+├──────────────────────┤
+│ 🟥🟥🟥🟥🟥⬜⬜⬜⬜⬜ │
+└──────────────────────┘
 
-## Getting started with your own extension
-After creating a repository from this template, the first step is to name your extension. To rename the extension, run:
-```
-python3 ./scripts/bootstrap-template.py <extension_name_you_want>
-```
-Feel free to delete the script after this step.
-
-Now you're good to go! After a (re)build, you should now be able to use your duckdb extension:
-```
-./build/release/duckdb
-D select <extension_name_you_chose>('Jane') as result;
-┌─────────────────────────────────────┐
-│                result               │
-│               varchar               │
-├─────────────────────────────────────┤
-│ <extension_name_you_chose> Jane 🐥  │
-└─────────────────────────────────────┘
+-- Custom width and range
+SELECT tp_bar(75, min := 0, max := 100, width := 20);
+┌───────────────────────────────────────────────┐
+│ tp_bar(75, min := 0, max := 100, width := 20) │
+│                    varchar                    │
+├───────────────────────────────────────────────┤
+│ 🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥⬜⬜⬜⬜⬜      │
+└───────────────────────────────────────────────┘
 ```
 
-For inspiration/examples on how to extend DuckDB in a more meaningful way, check out the [test extensions](https://github.com/duckdb/duckdb/blob/main/test/extension),
-the [in-tree extensions](https://github.com/duckdb/duckdb/tree/main/extension), and the [out-of-tree extensions](https://github.com/duckdblabs).
+**Advanced Options:**
+```sql
+-- Custom colors and shapes
+SELECT tp_bar(0.8, shape := 'circle', on_color := 'green', off_color := 'white') as bar;
+┌──────────────────────┐
+│         bar          │
+│       varchar        │
+├──────────────────────┤
+│ 🟢🟢🟢🟢🟢🟢🟢🟢⚪⚪ │
+└──────────────────────┘
 
-## Distributing your extension
-To distribute your extension binaries, there are a few options.
+-- Threshold-based coloring
+SELECT tp_bar(85,
+    min := 0, max := 100,
+    thresholds := [
+        {'threshold': 90, 'color': 'red'},
+        {'threshold': 70, 'color': 'yellow'},
+        {'threshold': 0, 'color': 'green'}
+    ]
+) as bar;
+┌──────────────────────┐
+│         bar          │
+│       varchar        │
+├──────────────────────┤
+│ 🟨🟨🟨🟨🟨🟨🟨🟨🟨⬜ │
+└──────────────────────┘
 
-### Community extensions
-The recommended way of distributing extensions is through the [community extensions repository](https://github.com/duckdb/community-extensions).
-This repository is designed specifically for extensions that are built using this extension template, meaning that as long as your extension can be
-built using the default CI in this template, submitting it to the community extensions is a very simple process. The process works similarly to popular
-package managers like homebrew and vcpkg, where a PR containing a descriptor file is submitted to the package manager repository. After the CI in the
-community extensions repository completes, the extension can be installed and loaded in DuckDB with:
-```SQL
-INSTALL <my_extension> FROM community;
-LOAD <my_extension>
+-- Custom characters
+SELECT tp_bar(0.7, on := '█', off := '░', width := 15) as bar;
+┌─────────────────┐
+│       bar       │
+│     varchar     │
+├─────────────────┤
+│ ███████████░░░░ │
+└─────────────────┘
+
+SELECT round(n,4),
+tp_bar(n,
+width := 14,
+shape := 'circle',
+off_color :='black',
+filled := false,
+thresholds := [
+  (0.8, 'red'),
+  (0.7, 'orange'),
+  (0.6, 'yellow'),
+  (0.0, 'green')
+]) as bar
+FROM (select random() as n from generate_series(10));
+┌─────────────┬──────────────────────────────┐
+│ round(n, 4) │             bar              │
+│   double    │           varchar            │
+├─────────────┼──────────────────────────────┤
+│      0.9889 │ ⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫🔴 │
+│      0.6242 │ ⚫⚫⚫⚫⚫⚫⚫⚫🟡⚫⚫⚫⚫⚫ │
+│      0.6013 │ ⚫⚫⚫⚫⚫⚫⚫🟡⚫⚫⚫⚫⚫⚫ │
+│       0.669 │ ⚫⚫⚫⚫⚫⚫⚫⚫🟡⚫⚫⚫⚫⚫ │
+│      0.8363 │ ⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫🔴⚫⚫ │
+│      0.9193 │ ⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫🔴⚫ │
+│      0.8629 │ ⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫🔴⚫⚫ │
+│      0.8296 │ ⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫🔴⚫⚫ │
+│      0.0824 │ 🟢⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫ │
+│      0.0281 │ ⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫ │
+│      0.2682 │ ⚫⚫⚫🟢⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫ │
+├─────────────┴──────────────────────────────┤
+│ 11 rows                          2 columns │
+└────────────────────────────────────────────┘
+
+SELECT round(n,4),
+tp_bar(n,
+width := 14,
+shape := 'circle',
+off_color :='black',
+filled := true,
+thresholds := [
+  (0.8, 'red'),
+  (0.7, 'orange'),
+  (0.6, 'yellow'),
+  (0.0, 'green')
+]) as bar
+FROM (select random() as n from generate_series(10));
+┌─────────────┬──────────────────────────────┐
+│ round(n, 4) │             bar              │
+│   double    │           varchar            │
+├─────────────┼──────────────────────────────┤
+│      0.3818 │ 🟢🟢🟢🟢🟢⚫⚫⚫⚫⚫⚫⚫⚫⚫ │
+│      0.1919 │ 🟢🟢🟢⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫ │
+│      0.5885 │ 🟢🟢🟢🟢🟢🟢🟢🟢⚫⚫⚫⚫⚫⚫ │
+│      0.9558 │ 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴⚫ │
+│      0.4463 │ 🟢🟢🟢🟢🟢🟢⚫⚫⚫⚫⚫⚫⚫⚫ │
+│      0.6024 │ 🟡🟡🟡🟡🟡🟡🟡🟡⚫⚫⚫⚫⚫⚫ │
+│      0.0114 │ ⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫⚫ │
+│      0.4993 │ 🟢🟢🟢🟢🟢🟢🟢⚫⚫⚫⚫⚫⚫⚫ │
+│      0.6884 │ 🟡🟡🟡🟡🟡🟡🟡🟡🟡🟡⚫⚫⚫⚫ │
+│      0.7929 │ 🟠🟠🟠🟠🟠🟠🟠🟠🟠🟠🟠⚫⚫⚫ │
+│      0.3507 │ 🟢🟢🟢🟢🟢⚫⚫⚫⚫⚫⚫⚫⚫⚫ │
+├─────────────┴──────────────────────────────┤
+│ 11 rows                          2 columns │
+└────────────────────────────────────────────┘
 ```
-For more information, see the [community extensions documentation](https://duckdb.org/community_extensions/documentation).
 
-### Downloading artifacts from GitHub
-The default CI in this template will automatically upload the binaries for every push to the main branch as GitHub Actions artifacts. These
-can be downloaded manually and then loaded directly using:
-```SQL
-LOAD '/path/to/downloaded/extension.duckdb_extension';
+**Parameters:**
+- `value`: Numeric value to visualize
+- `min`: Minimum value (default: 0)
+- `max`: Maximum value (default: 1.0)
+- `width`: Bar width in characters (default: 10)
+- `shape`: 'square', 'circle', or 'heart' (default: 'square')
+- `on_color`/`off_color`: Color names (red, green, blue, yellow, etc.)
+- `on`/`off`: Custom characters for filled/empty portions
+- `filled`: Boolean, fill all blocks or just the endpoint (default: true)
+- `thresholds`: List of threshold objects for conditional coloring
+
+### `tp_density(values, ...options)`
+Creates density plots and histograms from arrays of numeric data.
+
+**Basic Usage:**
+```sql
+-- Simple density plot
+SELECT tp_density([1, 2, 3, 4, 5, 4, 3, 2, 1]) as density;
+┌──────────────────────┐
+│       density        │
+│       varchar        │
+├──────────────────────┤
+│ █    █    █    █   ▒ │
+└──────────────────────┘
+
+-- Custom width and style
+SELECT tp_density([1, 2, 3, 2, 1], width := 30, style := 'height') as density;
+┌────────────────────────────────┐
+│            density             │
+│            varchar             │
+├────────────────────────────────┤
+│ █              █             ▄ │
+└────────────────────────────────┘
 ```
-Note that this will require starting DuckDB with the
-`allow_unsigned_extensions` option set to true. How to set this will depend on the client you're using. For the CLI it is done like:
-```shell
-duckdb -unsigned
+
+**Style Options:**
+```sql
+-- ASCII style for compatibility
+SELECT tp_density([1, 5, 3, 8, 2], style := 'ascii') as density;
+┌──────────────────────┐
+│       density        │
+│       varchar        │
+├──────────────────────┤
+│ @ @  @     @       @ │
+└──────────────────────┘
+
+-- Dot style for subtle visualization
+SELECT tp_density([1, 5, 3, 8, 2], style := 'dots') as density;
+┌──────────────────────┐
+│       density        │
+│       varchar        │
+├──────────────────────┤
+│ ● ●  ●     ●       ● │
+└──────────────────────┘
+
+-- Colorful emoji styles
+SELECT tp_density([1, 5, 3, 8, 2], style := 'rainbow_circle') as density;
+┌──────────────────────────────────────────┐
+│                 density                  │
+│                 varchar                  │
+├──────────────────────────────────────────┤
+│ ⚪⚫⚪⚫⚫⚪⚫⚫⚫⚫⚫⚪⚫⚫⚫⚫⚫⚫⚫⚪ │
+└──────────────────────────────────────────┘
 ```
 
-### Uploading to a custom repository
-If for some reason distributing through community extensions is not an option, extensions can also be uploaded to a custom extension repository.
-This will give some more control over where and how the extensions are distributed, but comes with the downside of requiring the `allow_unsigned_extensions`
-option to be set. For examples of how to configure a manual GitHub Actions deploy pipeline, check out the extension deploy script in https://github.com/duckdb/extension-ci-tools.
-Some examples of extensions that use this CI/CD workflow check out [spatial](https://github.com/duckdblabs/duckdb_spatial) or [aws](https://github.com/duckdb/duckdb_aws).
+**Parameters:**
+- `values`: Array of numeric values
+- `width`: Plot width in characters (default: 20)
+- `style`: Character set style ('shaded', 'ascii', 'dots', 'height', 'circles', 'safety', 'rainbow_circle', 'rainbow_square', 'moon', 'sparse', 'white')
+- `graph_chars`: Custom array of characters for density levels
+- `marker`: Character to highlight specific values
 
-Extensions in custom repositories can be installed and loaded using:
-```SQL
-INSTALL <my_extension> FROM 'http://my-custom-repo'
-LOAD <my_extension>
+**Available Styles:**
+- `shaded`: ` ░▒▓█` (default)
+- `ascii`: ` .:+#@`
+- `dots`: ` .•●`
+- `height`: ` ▁▂▃▄▅▆▇█`
+- `circles`: `⚫⚪🟡🟠🔴`
+- `rainbow_circle`: `⚫🟤🟣🔵🟢🟡🟠🔴⚪`
+
+### `tp_sparkline(values, ...options)`
+Creates compact sparkline charts perfect for showing trends in time series data and small multiples.
+
+**Basic Usage:**
+```sql
+-- Simple absolute value sparkline
+SELECT tp_sparkline([1, 3, 2, 5, 4, 6, 2, 1]) as sparkline;
+┌──────────────────────┐
+│      sparkline       │
+│       varchar        │
+├──────────────────────┤
+│    ==---##***@@---   │
+└──────────────────────┘
+
+-- Delta mode showing change direction
+SELECT tp_sparkline([100, 105, 102, 108, 95], mode := 'delta') as sparkline;
+┌──────────────────────┐
+│      sparkline       │
+│       varchar        │
+├──────────────────────┤
+│ ↑↑↑↑↑↓↓↓↓↓↑↑↑↑↑↓↓↓↓↓ │
+└──────────────────────┘
+
+-- Trend mode with magnitude
+SELECT tp_sparkline([10, 12, 11, 15, 8], mode := 'trend', theme := 'slopes') as sparkline;
+┌───────────────────────────┐
+│         sparkline         │
+│          varchar          │
+├───────────────────────────┤
+│ /////\\\\\/////\\\\\\\\\\ │
+└───────────────────────────┘
 ```
 
-### Versioning of your extension
-Extension binaries will only work for the specific DuckDB version they were built for. The version of DuckDB that is targeted
-is set to the latest stable release for the main branch of the template so initially that is all you need. As new releases
-of DuckDB are published however, the extension repository will need to be updated. The template comes with a workflow set-up
-that will automatically build the binaries for all DuckDB target architectures that are available in the corresponding DuckDB
-version. This workflow is found in `.github/workflows/MainDistributionPipeline.yml`. It is up to the extension developer to keep
-this up to date with DuckDB. Note also that its possible to distribute binaries for multiple DuckDB versions in this workflow
-by simply duplicating the jobs.
+**Visualization Modes:**
 
-## Setting up CLion
+**1. Absolute Mode (default)** - Shows actual values as heights:
+```sql
+-- Stock prices over time
+SELECT tp_sparkline([45.2, 47.1, 46.8, 49.3, 52.1, 48.7], width := 20, theme := 'utf8_blocks') as sparkline;
+┌──────────────────────┐
+│      sparkline       │
+│       varchar        │
+├──────────────────────┤
+│     ▂▂▂▂▂▂▅▅▅▅███▄▄▄ │
+└──────────────────────┘
 
-### Opening project
-Configuring CLion with the extension template requires a little work. Firstly, make sure that the DuckDB submodule is available.
-Then make sure to open `./duckdb/CMakeLists.txt` (so not the top level `CMakeLists.txt` file from this repo) as a project in CLion.
-Now to fix your project path go to `tools->CMake->Change Project Root`([docs](https://www.jetbrains.com/help/clion/change-project-root-directory.html)) to set the project root to the root dir of this repo.
+-- System CPU usage
+SELECT tp_sparkline([25, 45, 78, 92, 67, 34], theme := 'ascii_basic', width := 15) as sparkline;
+┌─────────────────┐
+│    sparkline    │
+│     varchar     │
+├─────────────────┤
+│    --###@@***.. │
+└─────────────────┘
+```
 
-### Debugging
-To set up debugging in CLion, there are two simple steps required. Firstly, in `CLion -> Settings / Preferences -> Build, Execution, Deploy -> CMake` you will need to add the desired builds (e.g. Debug, Release, RelDebug, etc). There's different ways to configure this, but the easiest is to leave all empty, except the `build path`, which needs to be set to `../build/{build type}`. Now on a clean repository you will first need to run `make {build type}` to initialize the CMake build directory. After running make, you will be able to (re)build from CLion by using the build target we just created. If you use the CLion editor, you can create a CLion CMake profiles matching the CMake variables that are described in the makefile, and then you don't need to invoke the Makefile.
+**2. Delta Mode** - Shows direction of change (up/same/down):
+```sql
+-- Sales trend directions
+SELECT tp_sparkline([1000, 1200, 1150, 1300, 980], mode := 'delta', theme := 'arrows') as sparkline;
+┌──────────────────────┐
+│      sparkline       │
+│       varchar        │
+├──────────────────────┤
+│ ↑↑↑↑↑↓↓↓↓↓↑↑↑↑↑↓↓↓↓↓ │
+└──────────────────────┘
 
-The second step is to configure the unittest runner as a run/debug configuration. To do this, go to `Run -> Edit Configurations` and click `+ -> Cmake Application`. The target and executable should be `unittest`. This will run all the DuckDB tests. To specify only running the extension specific tests, add `--test-dir ../../.. [sql]` to the `Program Arguments`. Note that it is recommended to use the `unittest` executable for testing/development within CLion. The actual DuckDB CLI currently does not reliably work as a run target in CLion.
+-- Temperature changes
+SELECT tp_sparkline([72, 75, 75, 78, 71], mode := 'delta', theme := 'faces') as sparkline;
+┌──────────────────────────────────────────┐
+│                sparkline                 │
+│                 varchar                  │
+├──────────────────────────────────────────┤
+│ 😊😊😊😊😊😐😐😐😐😐😊😊😊😊😊😞😞😞😞😞 │
+└──────────────────────────────────────────┘
+```
+
+**3. Trend Mode** - Shows change direction with magnitude:
+```sql
+-- Market volatility
+SELECT tp_sparkline([100, 110, 105, 125, 90], mode := 'trend', theme := 'intensity') as sparkline;
+┌───────────────────────────┐
+│         sparkline         │
+│          varchar          │
+├───────────────────────────┤
+│ +++++-----+++++---------- │
+└───────────────────────────┘
+
+-- Server response times
+SELECT tp_sparkline([150, 145, 147, 180, 120], mode := 'trend', theme := 'arrows') as sparkline;
+┌──────────────────────┐
+│      sparkline       │
+│       varchar        │
+├──────────────────────┤
+│ ↓↓↓↓↓↑↑↑↑↑↑↑↑↑↑⇩⇩⇩⇩⇩ │
+└──────────────────────┘
+
+```
+
+**Available Themes by Mode:**
+
+**Absolute Mode Themes:**
+- `utf8_blocks`: ` ▁▂▃▄▅▆▇█` (default)
+- `ascii_basic`: ` .-=+*#%@`
+- `hearts`: ` 🤍🤎❤️💛💚💙💜🖤`
+- `faces`: ` 😐🙂😊😃😄😁🤩🤯`
+
+**Delta Mode Themes:**
+- `arrows`: `↓→↑` (default)
+- `triangles`: `▼◆▲`
+- `ascii_arrows`: `v-^`
+- `math`: `-=+`
+- `faces`: `😞😐😊`
+- `thumbs`: `👎👍👍`
+- `trends`: `📉➡️📈`
+- `simple`: `\\_/`
+
+**Trend Mode Themes:**
+- `arrows`: `⇩↓→↑⇧` (default)
+- `ascii`: `Vv-^A`
+- `slopes`: `\\\\ \\ _ / //`
+- `intensity`: `-- - = + ++`
+- `faces`: `😭😞😐😊🤩`
+- `chart`: `📉📊➡️📊📈`
+
+**Parameters:**
+- `values`: Array of numeric values
+- `mode`: 'absolute', 'delta', or 'trend' (default: 'absolute')
+- `theme`: Theme name (varies by mode, see lists above)
+- `width`: Sparkline width in characters (default: 20)
+
+
+## Tips and Best Practices
+
+1. **Choose appropriate widths**: Longer bars (width 20-30) work well for dashboards, shorter bars (width 10-15) for compact reports
+2. **Use thresholds for status indicators**: Perfect for showing health, performance, or risk levels
+3. **Combine with regular metrics**: Text plots complement, don't replace, numeric values
+4. **Consider your audience**: ASCII styles work everywhere, emoji styles are more visually appealing but require Unicode support
+5. **Leverage density plots for distributions**: Great for showing data patterns, outliers, and distributions
+
+## Contributing
+
+The Textplot extension is open source and developed by [Query.Farm](https://query.farm). Contributions are welcome!
+
+## License
+
+[MIT License](LICENSE)
