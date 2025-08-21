@@ -1,23 +1,23 @@
-# name: test/sql/quack.test
-# description: test quack extension
+# name: test/sql/textplot.test
+# description: test textplot extension
 # group: [sql]
 
 # Before we load the extension, this will fail
 statement error
-SELECT quack('Sam');
+SELECT textplot('Sam');
 ----
-Catalog Error: Scalar Function with name quack does not exist!
+Catalog Error: Scalar Function with name textplot does not exist!
 
 # Require statement will ensure this test is run with this extension loaded
-require quack
+require textplot
 
 # Confirm the extension works
 query I
-SELECT quack('Sam');
+SELECT textplot('Sam');
 ----
-Quack Sam 🐥
+Textplot Sam 🐥
 
 query I
-SELECT quack_openssl_version('Michael') ILIKE 'Quack Michael, my linked OpenSSL version is OpenSSL%';
+SELECT textplot_openssl_version('Michael') ILIKE 'Textplot Michael, my linked OpenSSL version is OpenSSL%';
 ----
 true
