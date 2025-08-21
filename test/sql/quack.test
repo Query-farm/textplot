@@ -12,12 +12,12 @@ Catalog Error: Scalar Function with name textplot does not exist!
 require textplot
 
 # Confirm the extension works
-query I
-SELECT textplot('Sam');
+query T
+SELECT tp_bar(0.7)
 ----
-Textplot Sam 🐥
+🟥🟥🟥🟥🟥🟥🟥⬜⬜⬜
 
-query I
-SELECT textplot_openssl_version('Michael') ILIKE 'Textplot Michael, my linked OpenSSL version is OpenSSL%';
+query T
+SELECT tp_density([1,2,3], width := 5);
 ----
-true
+█ █ █

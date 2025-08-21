@@ -48,8 +48,7 @@ static unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, Scal
 		throw BinderException("tp_density takes at least one argument");
 	}
 
-	auto source_type = LogicalType::LIST(LogicalType::DOUBLE);
-	auto &first_arg = arguments[0]->return_type;
+	const auto &first_arg = arguments[0]->return_type;
 	if (!first_arg.IsNested() || first_arg.InternalType() != PhysicalType::LIST ||
 	    !ListType::GetChildType(first_arg).IsNumeric()) {
 		throw InvalidTypeException("tp_density first argument must be a list of numeric values");
@@ -59,22 +58,22 @@ static unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, Scal
 	int64_t width = 20;
 	std::vector<std::string> graph_characters;
 	string marker_char;
-	string style = "";
+	string style;
 
 	for (idx_t i = 1; i < arguments.size(); i++) {
-		auto &arg = arguments[i];
+		const auto &arg = arguments[i];
 		if (arg->HasParameter()) {
 			throw ParameterNotResolvedException();
 		}
 		if (!arg->IsFoldable()) {
 			throw BinderException("tp_density: arguments must be constant");
 		}
-		auto &alias = arg->GetAlias();
+		const auto &alias = arg->GetAlias();
 		if (alias == "width") {
 			if (!arg->return_type.IsIntegral()) {
 				throw BinderException("tp_density: 'width' argument must be an integer");
 			}
-			auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
+			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			width = eval_result.CastAs(context, LogicalType::UBIGINT).GetValue<uint64_t>();
 		} else if (alias == "marker") {
 			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
@@ -86,16 +85,14 @@ static unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, Scal
 				throw BinderException("tp_density: 'graph_chars' argument must be a VARCHAR");
 			}
 
-			child_list_t<LogicalType> children;
-
 			if (arg->return_type.InternalType() != PhysicalType::LIST) {
 				throw BinderException(
 				    StringUtil::Format("tp_density: 'graph_chars' argument must be a list of strings it is %s",
 				                       arg->return_type.ToString()));
 			}
 
-			auto list_children = ListValue::GetChildren(ExpressionExecutor::EvaluateScalar(context, *arg));
-			for (auto &list_item : list_children) {
+			const auto list_children = ListValue::GetChildren(ExpressionExecutor::EvaluateScalar(context, *arg));
+			for (const auto &list_item : list_children) {
 				// These should also be lists.
 				if (list_item.type() != LogicalType::VARCHAR) {
 					throw BinderException(
@@ -121,8 +118,7 @@ static unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, Scal
 
 	if (!style.empty()) {
 		// lookup the style in density_sets
-		auto it = density_sets.find(style);
-		if (it != density_sets.end()) {
+		if (const auto it = density_sets.find(style); it != density_sets.end()) {
 			graph_characters = it->second;
 		} else {
 			throw BinderException(StringUtil::Format("tp_density: Unknown style '%s'", style));
@@ -132,14 +128,13 @@ static unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, Scal
 }
 
 inline void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &bind_data = func_expr.bind_info->Cast<TextplotDensityBindData>();
 
 	auto &value_vector = args.data[0];
 	Vector input_data(LogicalType::LIST(LogicalType::DOUBLE));
 	VectorOperations::Cast(state.GetContext(), value_vector, input_data, args.size());
 
-	//	auto list_entries = FlatVector::GetData<list_entry_t>(input_data);
 	auto &child_data = ListVector::GetEntry(input_data);
 	auto source_data = FlatVector::GetData<double>(child_data);
 
@@ -147,8 +142,9 @@ inline void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &res
 
 	UnaryExecutor::Execute<list_entry_t, string_t>(input_data, result, args.size(), [&](list_entry_t values) {
 		std::vector<double> data_items;
+		data_items.reserve(values.length);
 
-		for (idx_t i = values.offset; i < values.offset + values.length; i++) {
+		for (auto i = values.offset; i < values.offset + values.length; i++) {
 			data_items.push_back(source_data[i]);
 		}
 
@@ -157,53 +153,51 @@ inline void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &res
 		}
 
 		// Find min and max values
-		auto minmax = std::minmax_element(data_items.begin(), data_items.end());
-		double minVal = *minmax.first;
-		double maxVal = *minmax.second;
+		const auto minmax = std::minmax_element(data_items.cbegin(), data_items.cend());
+		const double minVal = *minmax.first;
+		const double maxVal = *minmax.second;
 
 		if (minVal == maxVal) {
 			// All values are the same - use max density character
-			auto maxChar = bind_data.density_chars.back();
-			vector<string> output_items;
-			for (idx_t i = 0; i < bind_data.width; i++) {
-				output_items.push_back(maxChar);
-			}
+			const auto &maxChar = bind_data.density_chars.back();
+			std::vector<string> output_items(bind_data.width, maxChar);
 
 			// Add marker if value matches
-			if (!std::isnan(markerValue) && std::abs(minVal - markerValue) < 1e-10) {
-				for (int i = 0; i < bind_data.width; i++) {
-					output_items[i] = bind_data.marker_char;
-				}
+			if (!std::isnan(markerValue) && std::abs(minVal - markerValue) < 1e-10 && !bind_data.marker_char.empty()) {
+				std::fill(output_items.begin(), output_items.end(), bind_data.marker_char);
 			}
 
 			// Now join all of the items without commas
-			std::string output_result = StringUtil::Join(output_items, "");
+			std::string output_result;
+			for (const auto &item : output_items) {
+				output_result += item;
+			}
 			return StringVector::AddString(result, output_result);
 		}
 
 		// Create histogram bins
 		std::vector<int> bins(bind_data.width, 0);
-		double range = maxVal - minVal;
-		double binWidth = range / bind_data.width;
+		const double range = maxVal - minVal;
+		const double binWidth = range / bind_data.width;
 
 		// Count values in each bin
-		for (double val : data_items) {
-			int binIndex = static_cast<int>((val - minVal) / binWidth);
+		for (const double val : data_items) {
+			auto binIndex = static_cast<int>((val - minVal) / binWidth);
 			if (binIndex >= bind_data.width)
 				binIndex = bind_data.width - 1; // Handle edge case
 			bins[binIndex]++;
 		}
 
 		// Find max count for scaling
-		int maxCount = *std::max_element(bins.begin(), bins.end());
+		const int maxCount = *std::max_element(bins.cbegin(), bins.cend());
 		if (maxCount == 0) {
-			auto maxChar = bind_data.density_chars.front();
-			vector<string> output_items;
-			for (idx_t i = 0; i < bind_data.width; i++) {
-				output_items.push_back(maxChar);
+			const auto &maxChar = bind_data.density_chars.front();
+			std::string output_result;
+			for (int64_t i = 0; i < bind_data.width; i++) {
+				output_result += maxChar;
 			}
 
-			return StringVector::AddString(result, StringUtil::Join(output_items, ""));
+			return StringVector::AddString(result, output_result);
 		}
 
 		// Determine marker position if specified
@@ -216,16 +210,16 @@ inline void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &res
 
 		// Generate ASCII representation using provided character set
 		std::string output_result;
-		int numLevels = bind_data.density_chars.size() - 1;
+		const int numLevels = bind_data.density_chars.size() - 1;
 
 		for (int i = 0; i < bind_data.width; i++) {
 			// Check if this position should have a marker
-			if (i == markerPos) {
+			if (i == markerPos && !bind_data.marker_char.empty()) {
 				output_result += bind_data.marker_char;
 			} else {
 				// Scale bin count to character range
-				double normalized = static_cast<double>(bins[i]) / maxCount;
-				int charIndex = static_cast<int>(normalized * numLevels + 0.5);
+				const auto normalized = static_cast<double>(bins[i]) / maxCount;
+				auto charIndex = static_cast<int>(normalized * numLevels + 0.5);
 				charIndex = std::min(charIndex, numLevels);
 				output_result += bind_data.density_chars[charIndex];
 			}
@@ -269,7 +263,7 @@ struct TextplotBarBindData : public FunctionData {
 
 private:
 	string get_char(const string &color, const string &default_color, const string &shape) const {
-		const std::unordered_map<std::string, std::string> *lookup_map;
+		const std::unordered_map<std::string, std::string> *lookup_map = nullptr;
 		if (shape == "square") {
 			lookup_map = &emoji_squares;
 		} else if (shape == "circle") {
@@ -281,8 +275,7 @@ private:
 		}
 
 		if (!color.empty()) {
-			auto it = lookup_map->find(color);
-			if (it != lookup_map->end()) {
+			if (const auto it = lookup_map->find(color); it != lookup_map->end()) {
 				return it->second;
 			} else {
 				throw BinderException(StringUtil::Format("tp_bar: Unknown color value '%s'", color));
@@ -293,7 +286,7 @@ private:
 	}
 
 	std::string get_threshold_color(double n, const string &default_color) const {
-		if (thresholds.size() == 0) {
+		if (thresholds.empty()) {
 			return default_color;
 		}
 		for (const auto &t : thresholds) {
@@ -356,39 +349,34 @@ static unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFu
 	vector<std::pair<double, string>> thresholds;
 
 	for (idx_t i = 1; i < arguments.size(); i++) {
-		auto &arg = arguments[i];
+		const auto &arg = arguments[i];
 		if (arg->HasParameter()) {
 			throw ParameterNotResolvedException();
 		}
 		if (!arg->IsFoldable()) {
 			throw BinderException("tp_bar: arguments must be constant");
 		}
-		auto &alias = arg->GetAlias();
+		const auto &alias = arg->GetAlias();
 		if (alias == "min") {
 			if (!arg->return_type.IsNumeric()) {
 				throw BinderException("tp_bar: 'min' argument must be numeric");
 			}
-			auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
+			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			min = eval_result.CastAs(context, LogicalType::DOUBLE).GetValue<double>();
 		} else if (alias == "max") {
 			if (!arg->return_type.IsNumeric()) {
 				throw BinderException("tp_bar: 'max' argument must be numeric");
 			}
-			auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
+			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			max = eval_result.CastAs(context, LogicalType::DOUBLE).GetValue<double>();
 		} else if (alias == "thresholds") {
-			child_list_t<LogicalType> children;
-			children.push_back({"threshold", LogicalType::DOUBLE});
-			children.push_back({"color", LogicalType::VARCHAR});
-			auto threshold_record_type = LogicalType::STRUCT(children);
-
 			if (arg->return_type.InternalType() != PhysicalType::LIST) {
 				throw BinderException(StringUtil::Format(
 				    "tp_bar: 'thresholds' argument must be a list of structs it is %s", arg->return_type.ToString()));
 			}
 
-			auto list_children = ListValue::GetChildren(ExpressionExecutor::EvaluateScalar(context, *arg));
-			for (auto &list_item : list_children) {
+			const auto list_children = ListValue::GetChildren(ExpressionExecutor::EvaluateScalar(context, *arg));
+			for (const auto &list_item : list_children) {
 				// These should also be lists.
 				if (list_item.type().InternalType() != PhysicalType::STRUCT) {
 					throw BinderException(
@@ -396,7 +384,7 @@ static unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFu
 					                       list_item.type().ToString(), list_item.ToString()));
 				}
 				// Here you can extract the fields from the struct if needed.
-				auto struct_fields = StructValue::GetChildren(list_item);
+				const auto struct_fields = StructValue::GetChildren(list_item);
 				if (struct_fields.size() != 2) {
 					throw BinderException(StringUtil::Format(
 					    "tp_bar: 'thresholds' child struct must have 2 fields it has %d", struct_fields.size()));
@@ -406,8 +394,8 @@ static unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFu
 					    "tp_bar: 'thresholds' child struct field 'threshold' must be numeric it is %s",
 					    struct_fields[0].type().ToString()));
 				}
-				double threshold = struct_fields[0].CastAs(context, LogicalType::DOUBLE).GetValue<double>();
-				string color = struct_fields[1].CastAs(context, LogicalType::VARCHAR).GetValue<string>();
+				const double threshold = struct_fields[0].CastAs(context, LogicalType::DOUBLE).GetValue<double>();
+				const string color = struct_fields[1].CastAs(context, LogicalType::VARCHAR).GetValue<string>();
 				thresholds.emplace_back(threshold, color);
 			}
 			std::sort(thresholds.begin(), thresholds.end(), [](const auto &a, const auto &b) {
@@ -417,10 +405,10 @@ static unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFu
 			if (!arg->return_type.IsIntegral()) {
 				throw BinderException("tp_bar: 'width' argument must be an integer");
 			}
-			auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
+			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			width = eval_result.CastAs(context, LogicalType::UBIGINT).GetValue<uint64_t>();
 		} else if (alias == "filled") {
-			auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
+			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			filled = eval_result.CastAs(context, LogicalType::BOOLEAN).GetValue<bool>();
 		} else if (alias == "on") {
 			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
@@ -465,14 +453,15 @@ static unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFu
 
 inline void TextplotBar(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &value_vector = args.data[0];
-	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &bind_data = func_expr.bind_info->Cast<TextplotBarBindData>();
 
 	UnaryExecutor::Execute<double, string_t>(value_vector, result, args.size(), [&](double value) {
-		auto proportion = std::clamp((value - bind_data.min) / (bind_data.max - bind_data.min), 0.0, 1.0);
-		int64_t filled_blocks = static_cast<int64_t>(std::round(bind_data.width * proportion));
+		const auto proportion = std::clamp((value - bind_data.min) / (bind_data.max - bind_data.min), 0.0, 1.0);
+		const auto filled_blocks = static_cast<int64_t>(std::round(bind_data.width * proportion));
 
 		string bar;
+		bar.reserve(bind_data.width * 4); // Reserve space for potential multi-byte characters
 		for (int64_t i = 0; i < bind_data.width; i++) {
 			if (bind_data.filled) {
 				// Fill all blocks up to the proportion
