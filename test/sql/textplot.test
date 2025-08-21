@@ -21,3 +21,8 @@ query T
 SELECT tp_density([1,2,3], width := 5);
 ----
 █ █ █
+
+query T
+select tp_sparkline([3,3,4,2,2,1,-5,-5], mode := 'delta', theme := 'thumbs', width:= 5);
+----
+👍👍👎👎👎
