@@ -10,7 +10,7 @@
 namespace duckdb {
 
 static void LoadInternal(DatabaseInstance &instance) {
-	auto bar_function = ScalarFunction("tp_bar", {LogicalType::DOUBLE}, LogicalType::VARCHAR, TextplotQR,
+	auto bar_function = ScalarFunction("tp_bar", {LogicalType::DOUBLE}, LogicalType::VARCHAR, TextplotBar,
 	                                   TextplotBarBind, nullptr, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
 	ExtensionUtil::RegisterFunction(instance, bar_function);
 
