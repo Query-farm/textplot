@@ -16,19 +16,22 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 project(${TARGET_NAME})
 include_directories(src/include)
 
+
+find_package(unofficial-nayuki-qr-code-generator CONFIG REQUIRED)
+
 set(EXTENSION_SOURCES
     src/textplot_extension.cpp
     src/textplot_bar.cpp
     src/textplot_density.cpp
     src/textplot_sparkline.cpp
+    src/textplot_qr.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-# Link OpenSSL in both the static library as the loadable extension
-target_link_libraries(${EXTENSION_NAME})
-target_link_libraries(${LOADABLE_EXTENSION_NAME})
+target_link_libraries(${EXTENSION_NAME} unofficial::nayuki-qr-code-generator::nayuki-qr-code-generator)
+target_link_libraries(${LOADABLE_EXTENSION_NAME} unofficial::nayuki-qr-code-generator::nayuki-qr-code-generator)
 
 install(
   TARGETS ${EXTENSION_NAME}

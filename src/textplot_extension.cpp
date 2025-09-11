@@ -2,6 +2,7 @@
 #include "textplot_bar.hpp"
 #include "textplot_density.hpp"
 #include "textplot_sparkline.hpp"
+#include "textplot_qr.hpp"
 #include "duckdb.hpp"
 #include "duckdb/main/extension_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -9,9 +10,13 @@
 namespace duckdb {
 
 static void LoadInternal(DatabaseInstance &instance) {
-	auto bar_function = ScalarFunction("tp_bar", {LogicalType::DOUBLE}, LogicalType::VARCHAR, TextplotBar,
+	auto bar_function = ScalarFunction("tp_bar", {LogicalType::DOUBLE}, LogicalType::VARCHAR, TextplotQR,
 	                                   TextplotBarBind, nullptr, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
 	ExtensionUtil::RegisterFunction(instance, bar_function);
+
+	auto qr_function = ScalarFunction("tp_qr", {LogicalType::VARCHAR}, LogicalType::VARCHAR, TextplotQR, TextplotQRBind,
+	                                  nullptr, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
+	ExtensionUtil::RegisterFunction(instance, qr_function);
 
 	// Lets register a density function.
 	auto density_function =
