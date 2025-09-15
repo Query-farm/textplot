@@ -1,6 +1,5 @@
 #include "textplot_bar.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
