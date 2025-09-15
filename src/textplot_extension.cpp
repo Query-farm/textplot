@@ -5,6 +5,7 @@
 #include "textplot_qr.hpp"
 #include "duckdb.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "query_farm_telemetry.hpp"
 
 namespace duckdb {
 
@@ -27,6 +28,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                                         LogicalType::VARCHAR, TextplotSparkline, TextplotSparklineBind, nullptr,
 	                                         nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
 	loader.RegisterFunction(sparkline_function);
+
+	QueryFarmSendTelemetry(loader, "textplot", TextplotExtension().Version());
 }
 
 void TextplotExtension::Load(ExtensionLoader &loader) {
@@ -38,11 +41,7 @@ std::string TextplotExtension::Name() {
 }
 
 std::string TextplotExtension::Version() const {
-#ifdef EXT_VERSION_QUACK
-	return EXT_VERSION_QUACK;
-#else
-	return "";
-#endif
+	return "2025091501";
 }
 
 } // namespace duckdb

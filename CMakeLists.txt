@@ -25,6 +25,7 @@ set(EXTENSION_SOURCES
     src/textplot_density.cpp
     src/textplot_sparkline.cpp
     src/textplot_qr.cpp
+    src/query_farm_telemetry.cpp
 )
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
