@@ -46,9 +46,7 @@ INTERNAL_FUNC void QueryFarmSendTelemetry(ExtensionLoader &loader, const string 
 		return;
 	}
 
-	auto db = loader.GetDatabaseInstance().shared_from_this();
-
-	auto &dbconfig = DBConfig::GetConfig(*db);
+	auto &dbconfig = DBConfig::GetConfig(loader.GetDatabaseInstance());
 	auto old_value = dbconfig.options.autoinstall_known_extensions;
 	dbconfig.options.autoinstall_known_extensions = false;
 	try {
@@ -69,12 +67,10 @@ INTERNAL_FUNC void QueryFarmSendTelemetry(ExtensionLoader &loader, const string 
 	auto result_obj = yyjson_mut_obj(doc);
 	yyjson_mut_doc_set_root(doc, result_obj);
 
-	auto user_agent = "query-farm/20250915";
-	auto platform = DuckDB::Platform();
 	yyjson_mut_obj_add_str(doc, result_obj, "extension_name", extension_name.c_str());
 	yyjson_mut_obj_add_str(doc, result_obj, "extension_version", extension_version.c_str());
-	yyjson_mut_obj_add_str(doc, result_obj, "user_agent", user_agent);
-	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_platform", platform.c_str());
+	yyjson_mut_obj_add_str(doc, result_obj, "user_agent", "query-farm/20250926");
+	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_platform", DuckDB::Platform().c_str());
 	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_library_version", DuckDB::LibraryVersion());
 	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_release_codename", DuckDB::ReleaseCodename());
 	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_source_id", DuckDB::SourceID());
@@ -89,8 +85,11 @@ INTERNAL_FUNC void QueryFarmSendTelemetry(ExtensionLoader &loader, const string 
 
 	auto telemetry_string = string(telemetry_data, (size_t)telemetry_len);
 
+	yyjson_mut_doc_free(doc);
+	free(telemetry_data);
+
 	// Send request asynchronously
-	sendRequestAsync(db, telemetry_string);
+	sendRequestAsync(loader.GetDatabaseInstance().shared_from_this(), telemetry_string);
 }
 
 } // namespace duckdb
