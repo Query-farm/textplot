@@ -68,7 +68,7 @@ private:
 		} else if (shape == "heart") {
 			lookup_map = &emoji_hearts;
 		} else {
-			throw BinderException("tp_bar: 'shape' argument must be one of 'square', 'circle', or 'heart'");
+			throw BinderException("tp_bar: 'shape' argument must be one of 'square', 'circle', 'heart'");
 		}
 
 		if (!color.empty()) {
@@ -100,7 +100,10 @@ unique_ptr<FunctionData> TextplotBarBindData::Copy() const {
 }
 
 bool TextplotBarBindData::Equals(const FunctionData &other_p) const {
-	return true;
+	const auto &other = other_p.Cast<TextplotBarBindData>();
+	return min == other.min && max == other.max && width == other.width && on == other.on && off == other.off &&
+	       filled == other.filled && thresholds == other.thresholds && char_shape == other.char_shape &&
+	       on_color == other.on_color && off_color == other.off_color;
 }
 
 unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction &bound_function,
@@ -221,8 +224,16 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 		shape = "square";
 	} else {
 		if (shape != "square" && shape != "circle" && shape != "heart") {
-			throw BinderException("tp_bar: 'shape' argument must be one of 'square', 'circle', or 'heart'");
+			throw BinderException("tp_bar: 'shape' argument must be one of 'square', 'circle', 'heart'");
 		}
+	}
+
+	if (width < 1) {
+		throw BinderException("tp_bar: 'width' argument must be at least 1");
+	}
+
+	if (min >= max) {
+		throw BinderException("tp_bar: 'min' must be less than 'max'");
 	}
 
 	return make_uniq<TextplotBarBindData>(min, max, width, on, off, filled, thresholds, shape, on_color, off_color);

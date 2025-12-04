@@ -283,7 +283,8 @@ unique_ptr<FunctionData> TextplotSparklineBindData::Copy() const {
 }
 
 bool TextplotSparklineBindData::Equals(const FunctionData &other_p) const {
-	return true;
+	const auto &other = other_p.Cast<TextplotSparklineBindData>();
+	return mode == other.mode && theme == other.theme && width == other.width;
 }
 
 unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFunction &bound_function,
@@ -359,8 +360,12 @@ unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFun
 		}
 	}
 	if (std::find(available_themes.begin(), available_themes.end(), theme) == available_themes.end()) {
-		throw BinderException(StringUtil::Format("tp_sparkline: Unknown theme '%s' for type '%s' available are <%s>",
+		throw BinderException(StringUtil::Format("tp_sparkline: Unknown theme '%s' for mode '%s', available are <%s>",
 		                                         theme, specified_mode, StringUtil::Join(available_themes, ", ")));
+	}
+
+	if (width < 1) {
+		throw BinderException("tp_sparkline: 'width' argument must be at least 1");
 	}
 
 	return make_uniq<TextplotSparklineBindData>(mode, theme, width);

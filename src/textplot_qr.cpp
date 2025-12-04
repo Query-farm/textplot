@@ -27,7 +27,8 @@ unique_ptr<FunctionData> TextplotQRBindData::Copy() const {
 }
 
 bool TextplotQRBindData::Equals(const FunctionData &other_p) const {
-	return true;
+	const auto &other = other_p.Cast<TextplotQRBindData>();
+	return ecc == other.ecc && on == other.on && off == other.off;
 }
 
 unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &bound_function,
@@ -75,6 +76,11 @@ unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &
 		}
 	}
 
+	// Validate ECC at bind time
+	if (ecc != "low" && ecc != "medium" && ecc != "quartile" && ecc != "high") {
+		throw BinderException("tp_qr: 'ecc' argument must be one of 'low', 'medium', 'quartile', 'high'");
+	}
+
 	if (off.empty()) {
 		off = "⬜";
 	}
@@ -97,17 +103,14 @@ void TextplotQR(DataChunk &args, ExpressionState &state, Vector &result) {
 		// auto qr = qrcodegen::QrCode::encodeSegments(segs, qrcodegen::QrCode::Ecc::LOW, bind_data.min_version,
 		//                                             bind_data.max_version, -1, bind_data.boost_ecc);
 
+		// ECC is already validated at bind time
 		qrcodegen::QrCode::Ecc ecc_level = qrcodegen::QrCode::Ecc::LOW;
-		if (bind_data.ecc == "low") {
-			ecc_level = qrcodegen::QrCode::Ecc::LOW;
-		} else if (bind_data.ecc == "medium") {
+		if (bind_data.ecc == "medium") {
 			ecc_level = qrcodegen::QrCode::Ecc::MEDIUM;
 		} else if (bind_data.ecc == "quartile") {
 			ecc_level = qrcodegen::QrCode::Ecc::QUARTILE;
 		} else if (bind_data.ecc == "high") {
 			ecc_level = qrcodegen::QrCode::Ecc::HIGH;
-		} else {
-			throw InvalidTypeException("tp_qr: 'ecc' argument must be one of 'low', 'medium', 'quartile', 'high'");
 		}
 
 		auto qr = qrcodegen::QrCode::encodeText(value.GetString().c_str(), ecc_level);
