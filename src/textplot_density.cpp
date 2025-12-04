@@ -187,8 +187,11 @@ void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result) {
 		// Count values in each bin
 		for (const double val : data_items) {
 			auto binIndex = static_cast<int>((val - minVal) / binWidth);
+			// Clamp to valid range to handle floating point edge cases
+			if (binIndex < 0)
+				binIndex = 0;
 			if (binIndex >= bind_data.width)
-				binIndex = bind_data.width - 1; // Handle edge case
+				binIndex = bind_data.width - 1;
 			bins[binIndex]++;
 		}
 
@@ -208,6 +211,9 @@ void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result) {
 		int markerPos = -1;
 		if (!std::isnan(markerValue) && markerValue >= minVal && markerValue <= maxVal) {
 			markerPos = static_cast<int>((markerValue - minVal) / binWidth);
+			// Clamp to valid range to handle floating point edge cases
+			if (markerPos < 0)
+				markerPos = 0;
 			if (markerPos >= bind_data.width)
 				markerPos = bind_data.width - 1;
 		}

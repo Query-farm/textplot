@@ -115,7 +115,11 @@ std::string generateAbsoluteSparkline(const double *data, int size, int width,
 
 	if (max_val == min_val) {
 		int mid_idx = characters.size() / 2;
-		return std::string(width, characters[mid_idx][0]);
+		std::string result;
+		for (int i = 0; i < width; i++) {
+			result += characters[mid_idx];
+		}
+		return result;
 	}
 
 	std::string result;
@@ -125,10 +129,16 @@ std::string generateAbsoluteSparkline(const double *data, int size, int width,
 	for (int i = 0; i < width; i++) {
 		int start_idx = static_cast<int>(i * data_per_char);
 		int end_idx = static_cast<int>((i + 1) * data_per_char);
+		// Clamp indices to valid range
+		if (start_idx >= size)
+			start_idx = size - 1;
 		if (end_idx > size)
 			end_idx = size;
 		if (start_idx >= end_idx)
 			end_idx = start_idx + 1;
+		// Final safety check: ensure we don't exceed array bounds
+		if (end_idx > size)
+			end_idx = size;
 
 		double sum = 0.0;
 		for (int j = start_idx; j < end_idx; j++) {
