@@ -77,8 +77,8 @@ SELECT tp_bar(85,
 │ 🟨🟨🟨🟨🟨🟨🟨🟨🟨⬜ │
 └──────────────────────┘
 
--- Custom characters
-SELECT tp_bar(0.7, on := '█', off := '░', width := 15) as bar;
+-- Custom characters (note: "on" and "off" are reserved keywords, so they must be quoted)
+SELECT tp_bar(0.7, "on" := '█', "off" := '░', width := 15) as bar;
 ┌─────────────────┐
 │       bar       │
 │     varchar     │
@@ -158,7 +158,7 @@ FROM (select random() as n from generate_series(10));
 - `width`: Bar width in characters (default: 10)
 - `shape`: 'square', 'circle', or 'heart' (default: 'square')
 - `on_color`/`off_color`: Color names (red, green, blue, yellow, etc.)
-- `on`/`off`: Custom characters for filled/empty portions
+- `"on"`/`"off"`: Custom characters for filled/empty portions (must be quoted - reserved keywords)
 - `filled`: Boolean, fill all blocks or just the endpoint (default: true)
 - `thresholds`: List of threshold objects for conditional coloring
 
@@ -400,8 +400,8 @@ select  tp_qr('hello world', ecc := 'high');
 
 **Advanced Options:**
 ```sql
--- Custom colors and shapes
-SELECT tp_qr('https://query.farm', ecc := 'high', "on" := '🟡', off := '⚫');
+-- Custom colors and shapes (note: "on" and "off" are reserved keywords, so they must be quoted)
+SELECT tp_qr('https://query.farm', ecc := 'high', "on" := '🟡', "off" := '⚫');
 🟡🟡🟡🟡🟡🟡🟡⚫🟡⚫🟡⚫🟡⚫🟡⚫⚫⚫🟡⚫🟡⚫🟡🟡🟡🟡🟡🟡🟡
 🟡⚫⚫⚫⚫⚫🟡⚫🟡⚫⚫⚫🟡⚫🟡⚫🟡⚫⚫🟡⚫⚫🟡⚫⚫⚫⚫⚫🟡
 🟡⚫🟡🟡🟡⚫🟡⚫🟡🟡🟡🟡🟡🟡⚫🟡🟡⚫⚫🟡🟡⚫🟡⚫🟡🟡🟡⚫🟡
@@ -437,8 +437,8 @@ SELECT tp_qr('https://query.farm', ecc := 'high', "on" := '🟡', off := '⚫');
 **Parameters:**
 - `value`: String value to encode in the QR code.
 - `ecc`: Error correction level ('low', 'medium', 'quartile', 'high', default: 'low')
-- `on`: Character for filled modules (default: '⬛')
-- `off`: Character for empty modules (default: '⬜')
+- `"on"`: Character for filled modules (default: '⬛') - must be quoted (reserved keyword)
+- `"off"`: Character for empty modules (default: '⬜') - must be quoted (reserved keyword)
 
 
 ## Tips and Best Practices
