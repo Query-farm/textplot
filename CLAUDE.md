@@ -10,20 +10,14 @@ Textplot is a DuckDB extension that provides text-based data visualization funct
 
 ```bash
 # Build release version
-make release
+VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake GEN=ninja make release
 
 # Build debug version
-make debug
+VCPKG_TOOLCHAIN_PATH=`pwd`/vcpkg/scripts/buildsystems/vcpkg.cmake GEN=ninja make debug
 
 # Run tests (requires build first)
 make test           # runs against release build
 make test_debug     # runs against debug build
-
-# Format code
-make format
-
-# Clean build artifacts
-make clean
 ```
 
 The build uses CMake under the hood. Build outputs go to `build/release/` or `build/debug/`.
