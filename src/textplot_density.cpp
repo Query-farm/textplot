@@ -25,9 +25,6 @@ const std::unordered_map<std::string, std::vector<std::string>> density_sets = {
     {"white", {" ", "⚪", "🔘", "⚫"}},
 };
 
-// Density plot character sets
-extern const std::unordered_map<std::string, std::vector<std::string>> density_sets;
-
 // Density plot bind data structure
 struct TextplotDensityBindData : public FunctionData {
 	int64_t width = 20;
@@ -42,7 +39,8 @@ struct TextplotDensityBindData : public FunctionData {
 		return make_uniq<TextplotDensityBindData>(width, density_chars, marker_char);
 	}
 	bool Equals(const FunctionData &other_p) const override {
-		return true;
+		const auto &other = other_p.Cast<TextplotDensityBindData>();
+		return width == other.width && density_chars == other.density_chars && marker_char == other.marker_char;
 	}
 };
 
@@ -128,6 +126,11 @@ unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, ScalarFunct
 			throw BinderException(StringUtil::Format("tp_density: Unknown style '%s'", style));
 		}
 	}
+
+	if (width < 1) {
+		throw BinderException("tp_density: 'width' argument must be at least 1");
+	}
+
 	return make_uniq<TextplotDensityBindData>(width, graph_characters, marker_char);
 }
 
