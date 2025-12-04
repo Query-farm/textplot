@@ -22,6 +22,10 @@ make test_debug     # runs against debug build
 
 The build uses CMake under the hood. Build outputs go to `build/release/` or `build/debug/`.
 
+All extension functions should be documented inside of DuckDB with CreateScalarFunctionInfo or CreateAggregateFunctionInfo or the appropriate type for the function.  This documentation of the function should include examples, parameter types and parameter names.  The function should be categorized.
+
+When making changes the version should always be updated to the current date plus an ordinal counter in the form of YYYYMMDDCC.
+
 ## Architecture
 
 ### Extension Entry Point
