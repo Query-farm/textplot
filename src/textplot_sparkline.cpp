@@ -347,7 +347,16 @@ unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFun
 
 	auto available_themes = EnhancedSparklineThemes::getAvailableThemes(mode);
 	if (theme.empty()) {
-		theme = available_themes.front();
+		// Set default theme based on mode (matching documentation)
+		switch (mode) {
+		case SparklineMode::ABSOLUTE:
+			theme = "utf8_blocks";
+			break;
+		case SparklineMode::DELTA:
+		case SparklineMode::TREND:
+			theme = "arrows";
+			break;
+		}
 	}
 	if (std::find(available_themes.begin(), available_themes.end(), theme) == available_themes.end()) {
 		throw BinderException(StringUtil::Format("tp_sparkline: Unknown theme '%s' for type '%s' available are <%s>",
