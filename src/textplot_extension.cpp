@@ -41,7 +41,7 @@ std::string TextplotExtension::Name() {
 }
 
 std::string TextplotExtension::Version() const {
-	return "2025091501";
+	return "2025120401";
 }
 
 } // namespace duckdb
