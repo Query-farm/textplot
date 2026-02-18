@@ -21,7 +21,7 @@ You can now use this by using this SQL:
 
 ```sql
 install textplot from community;
-load textplot
+load textplot;
 ```
 
 ## Functions
