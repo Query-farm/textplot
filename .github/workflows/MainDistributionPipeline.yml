@@ -2,7 +2,7 @@ name: Main Extension Distribution Pipeline
 on:
   push:
     branches:
-    - main
+    - v1.5
   pull_request: null
   workflow_dispatch: null
 concurrency:
