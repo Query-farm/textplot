@@ -23,10 +23,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 		desc.parameter_names = {"value", "min", "max", "width", "on", "off", "on_color", "off_color", "shape",
 		                        "filled", "thresholds"};
 		desc.examples = {"tp_bar(0.75)",
-		                 "tp_bar(score, min := 0, max := 100, width := 20)",
-		                 "tp_bar(value, on := '#', off := '-', width := 10)",
-		                 "tp_bar(pct, shape := 'heart', on_color := 'red')",
-		                 "tp_bar(temp, thresholds := [{'threshold': 80, 'color': 'red'}, "
+		                 "tp_bar(75, min := 0, max := 100, width := 20)",
+		                 "tp_bar(0.5, \"on\" := '#', off := '-', width := 10)",
+		                 "tp_bar(0.8, shape := 'heart', on_color := 'red')",
+		                 "tp_bar(75, min := 0, max := 100, thresholds := "
+		                 "[{'threshold': 80, 'color': 'red'}, "
 		                 "{'threshold': 50, 'color': 'yellow'}])"};
 		info.descriptions.push_back(std::move(desc));
 
@@ -45,8 +46,8 @@ static void LoadInternal(ExtensionLoader &loader) {
 		                   "Supports configurable error correction levels and custom on/off characters.";
 		desc.parameter_names = {"data", "ecc", "on", "off"};
 		desc.examples = {"tp_qr('https://duckdb.org')",
-		                 "tp_qr(url, ecc := 'high')",
-		                 "tp_qr(message, on := '##', off := '  ')"};
+		                 "tp_qr('https://example.com', ecc := 'high')",
+		                 "tp_qr('Hello, world!', \"on\" := '##', off := '  ')"};
 		info.descriptions.push_back(std::move(desc));
 
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -65,10 +66,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 		                   "Supports multiple styles: shaded, dots, ascii, height, circles, safety, rainbow_circle, "
 		                   "rainbow_square, moon, sparse, and white.";
 		desc.parameter_names = {"values", "width", "style", "marker", "graph_chars"};
-		desc.examples = {"tp_density(list(value))",
-		                 "tp_density(array_agg(score), width := 40)",
-		                 "tp_density(data, style := 'height')",
-		                 "tp_density(temps, style := 'rainbow_square', width := 30)"};
+		desc.examples = {"tp_density([1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0])",
+		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], width := 40)",
+		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], style := 'height')",
+		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], "
+		                 "style := 'rainbow_square', width := 30)"};
 		info.descriptions.push_back(std::move(desc));
 
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -87,11 +89,14 @@ static void LoadInternal(ExtensionLoader &loader) {
 		                   "Supports three modes: 'absolute' (height-based), 'delta' (up/down/same direction), "
 		                   "and 'trend' (direction with magnitude). Multiple themes available per mode.";
 		desc.parameter_names = {"values", "width", "mode", "theme"};
-		desc.examples = {"tp_sparkline(list(value))",
-		                 "tp_sparkline(array_agg(price), width := 20)",
-		                 "tp_sparkline(data, mode := 'delta', theme := 'arrows')",
-		                 "tp_sparkline(temps, mode := 'absolute', theme := 'utf8_blocks')",
-		                 "tp_sparkline(stocks, mode := 'trend', theme := 'faces')"};
+		desc.examples = {"tp_sparkline([1.0, 2.0, 3.0, 4.0, 5.0])",
+		                 "tp_sparkline([1.0, 3.0, 2.0, 5.0, 4.0, 6.0], width := 20)",
+		                 "tp_sparkline([1.0, 2.0, 1.0, 3.0, 2.0], "
+		                 "mode := 'delta', theme := 'arrows')",
+		                 "tp_sparkline([1.0, 2.0, 3.0, 4.0, 5.0], "
+		                 "mode := 'absolute', theme := 'utf8_blocks')",
+		                 "tp_sparkline([1.0, 5.0, 3.0, 8.0, 6.0], "
+		                 "mode := 'trend', theme := 'faces')"};
 		info.descriptions.push_back(std::move(desc));
 
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -110,7 +115,7 @@ std::string TextplotExtension::Name() {
 }
 
 std::string TextplotExtension::Version() const {
-	return "2025120401";
+	return "2026042701";
 }
 
 } // namespace duckdb
