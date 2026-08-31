@@ -94,13 +94,24 @@ SELECT tp_sparkline(list_slice(l, 3, 9), width := 6) FROM (
 ----
  ▁▃▄▅▇
 
-# bracketed: the result ends in a space, which the test format would strip
+# bracketed: the result ends in a space, which the test format would strip.
+# list_sort pins the order: list_distinct alone returns its elements in hash order,
+# which differs between platforms.
 query T
-SELECT '[' || tp_sparkline(list_distinct(l), width := 6) || ']' FROM (
+SELECT '[' || tp_sparkline(list_sort(list_distinct(l), 'DESC'), width := 6) || ']' FROM (
   SELECT list((i % 4)::DOUBLE) l FROM range(12) t(i)
 );
 ----
 [██▅▃▃ ]
+
+# list_distinct's child is a dictionary vector rather than a flat one, so the reader has
+# to go through the selection vector. Only the shape is order-independent, so assert that.
+query T
+SELECT length(tp_sparkline(list_distinct(l), width := 6)) FROM (
+  SELECT list((i % 4)::DOUBLE) l FROM range(12) t(i)
+);
+----
+6
 
 # The shape the original bug report used: list aggregation inside a scalar subquery
 # feeding a UNION ALL.

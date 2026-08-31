@@ -127,7 +127,7 @@ std::string TextplotExtension::Name() {
 }
 
 std::string TextplotExtension::Version() const {
-	return "2026083001";
+	return "2026083101";
 }
 
 } // namespace duckdb
