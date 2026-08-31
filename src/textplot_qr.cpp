@@ -1,10 +1,14 @@
-#include "textplot_bar.hpp"
+#include "textplot_qr.hpp"
+#include "textplot_common.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include <algorithm>
+#include <cstdint>
+#include <string>
+#include <vector>
 #include "qrcodegen.hpp"
 
 namespace duckdb {
@@ -13,9 +17,11 @@ struct TextplotQRBindData : public FunctionData {
 	string ecc = "low";
 	string on = "";
 	string off = "";
+	//! BLOB input is always encoded in byte mode; VARCHAR may use the denser text modes.
+	bool binary = false;
 
-	TextplotQRBindData(string ecc_p, string on_p, string off_p)
-	    : ecc(std::move(ecc_p)), on(std::move(on_p)), off(std::move(off_p)) {
+	TextplotQRBindData(string ecc_p, string on_p, string off_p, bool binary_p)
+	    : ecc(std::move(ecc_p)), on(std::move(on_p)), off(std::move(off_p)), binary(binary_p) {
 	}
 
 	unique_ptr<FunctionData> Copy() const override;
@@ -23,23 +29,26 @@ struct TextplotQRBindData : public FunctionData {
 };
 
 unique_ptr<FunctionData> TextplotQRBindData::Copy() const {
-	return make_uniq<TextplotQRBindData>(ecc, on, off);
+	return make_uniq<TextplotQRBindData>(ecc, on, off, binary);
 }
 
 bool TextplotQRBindData::Equals(const FunctionData &other_p) const {
 	const auto &other = other_p.Cast<TextplotQRBindData>();
-	return ecc == other.ecc && on == other.on && off == other.off;
+	return ecc == other.ecc && on == other.on && off == other.off && binary == other.binary;
 }
 
 unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &bound_function,
                                         vector<unique_ptr<Expression>> &arguments) {
-
 	if (arguments.empty()) {
 		throw BinderException("tp_qr takes at least one argument");
 	}
 
-	if (!(arguments[0]->return_type == LogicalType::VARCHAR || arguments[0]->return_type == LogicalType::BLOB)) {
-		throw InvalidTypeException("tp_qr first argument must a VARCHAR or BLOB");
+	if (arguments[0]->return_type.id() == LogicalTypeId::UNKNOWN) {
+		throw ParameterNotResolvedException();
+	}
+	const auto binary = arguments[0]->return_type == LogicalType::BLOB;
+	if (!binary && arguments[0]->return_type != LogicalType::VARCHAR) {
+		throw InvalidTypeException("tp_qr first argument must be a VARCHAR or BLOB");
 	}
 
 	// Optional arguments
@@ -66,11 +75,13 @@ unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &
 				throw BinderException("tp_qr: 'on' argument must be a VARCHAR");
 			}
 			on = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
+			TextplotValidateCellString("tp_qr", "on", on);
 		} else if (alias == "off") {
 			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_qr: 'off' argument must be a VARCHAR");
 			}
 			off = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
+			TextplotValidateCellString("tp_qr", "off", off);
 		} else {
 			throw BinderException(StringUtil::Format("tp_qr: Unknown argument '%s'", alias));
 		}
@@ -89,7 +100,7 @@ unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &
 		on = "⬛";
 	}
 
-	return make_uniq<TextplotQRBindData>(ecc, on, off);
+	return make_uniq<TextplotQRBindData>(ecc, on, off, binary);
 }
 
 void TextplotQR(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -113,11 +124,22 @@ void TextplotQR(DataChunk &args, ExpressionState &state, Vector &result) {
 			ecc_level = qrcodegen::QrCode::Ecc::HIGH;
 		}
 
-		auto qr = qrcodegen::QrCode::encodeText(value.GetString().c_str(), ecc_level);
+		const auto text = value.GetString();
 
+		// encodeText takes a NUL-terminated string, so it would silently drop everything after an
+		// embedded NUL. Use byte mode for those inputs (and for BLOB) to encode the whole payload;
+		// plain text keeps the denser numeric/alphanumeric segment modes.
+		const auto use_binary = bind_data.binary || text.find('\0') != std::string::npos;
+		const auto qr =
+		    use_binary ? qrcodegen::QrCode::encodeBinary(std::vector<std::uint8_t>(text.begin(), text.end()), ecc_level)
+		               : qrcodegen::QrCode::encodeText(text.c_str(), ecc_level);
+
+		const auto size = qr.getSize();
 		string result_str;
-		for (int y = 0; y < qr.getSize(); y++) {
-			for (int x = 0; x < qr.getSize(); x++) {
+		result_str.reserve(static_cast<size_t>(size) *
+		                   (static_cast<size_t>(size) * std::max(bind_data.on.size(), bind_data.off.size()) + 1));
+		for (int y = 0; y < size; y++) {
+			for (int x = 0; x < size; x++) {
 				result_str += qr.getModule(x, y) ? bind_data.on : bind_data.off;
 			}
 			result_str += "\n";

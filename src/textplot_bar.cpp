@@ -1,10 +1,12 @@
 #include "textplot_bar.hpp"
+#include "textplot_common.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace duckdb {
 
@@ -55,6 +57,20 @@ struct TextplotBarBindData : public FunctionData {
 			return get_char(get_threshold_color(value, on_color), "red", char_shape);
 		}
 	}
+	//! Resolves every colour that get_character can reach, so that an unknown colour is reported
+	//! at bind time rather than thrown from inside the execute loop.
+	void validate_colors() const {
+		if (off.empty()) {
+			get_char(off_color, "white", char_shape);
+		}
+		if (on.empty()) {
+			get_char(on_color, "red", char_shape);
+			for (const auto &threshold : thresholds) {
+				get_char(threshold.second, "red", char_shape);
+			}
+		}
+	}
+
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other_p) const override;
 
@@ -74,12 +90,10 @@ private:
 		if (!color.empty()) {
 			if (const auto it = lookup_map->find(color); it != lookup_map->end()) {
 				return it->second;
-			} else {
-				throw BinderException(StringUtil::Format("tp_bar: Unknown color value '%s'", color));
 			}
-		} else {
-			return lookup_map->at(default_color);
+			throw BinderException(StringUtil::Format("tp_bar: Unknown color value '%s'", color));
 		}
+		return lookup_map->at(default_color);
 	}
 	std::string get_threshold_color(double n, const string &default_color) const {
 		if (thresholds.empty()) {
@@ -155,13 +169,20 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 				    "tp_bar: 'thresholds' argument must be a list of structs it is %s", arg->return_type.ToString()));
 			}
 
-			const auto list_children = ListValue::GetChildren(ExpressionExecutor::EvaluateScalar(context, *arg));
+			const auto thresholds_value = ExpressionExecutor::EvaluateScalar(context, *arg);
+			if (thresholds_value.IsNull()) {
+				throw BinderException("tp_bar: 'thresholds' argument must not be NULL");
+			}
+			const auto list_children = ListValue::GetChildren(thresholds_value);
 			for (const auto &list_item : list_children) {
 				// These should also be lists.
 				if (list_item.type().InternalType() != PhysicalType::STRUCT) {
 					throw BinderException(
 					    StringUtil::Format("tp_bar: 'thresholds' child must be a struct it is %s value is %s",
 					                       list_item.type().ToString(), list_item.ToString()));
+				}
+				if (list_item.IsNull()) {
+					throw BinderException("tp_bar: 'thresholds' child struct must not be NULL");
 				}
 				// Here you can extract the fields from the struct if needed.
 				const auto struct_fields = StructValue::GetChildren(list_item);
@@ -174,7 +195,13 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 					    "tp_bar: 'thresholds' child struct field 'threshold' must be numeric it is %s",
 					    struct_fields[0].type().ToString()));
 				}
+				if (struct_fields[0].IsNull() || struct_fields[1].IsNull()) {
+					throw BinderException("tp_bar: 'thresholds' child struct fields must not be NULL");
+				}
 				const double threshold = struct_fields[0].CastAs(context, LogicalType::DOUBLE).GetValue<double>();
+				if (!Value::DoubleIsFinite(threshold)) {
+					throw BinderException("tp_bar: 'thresholds' child struct field 'threshold' must be finite");
+				}
 				const string color = struct_fields[1].CastAs(context, LogicalType::VARCHAR).GetValue<string>();
 				thresholds.emplace_back(threshold, color);
 			}
@@ -195,11 +222,13 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 				throw BinderException("tp_bar: 'on' argument must be a VARCHAR");
 			}
 			on = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
+			TextplotValidateCellString("tp_bar", "on", on);
 		} else if (alias == "off") {
 			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_bar: 'off' argument must be a VARCHAR");
 			}
 			off = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
+			TextplotValidateCellString("tp_bar", "off", off);
 		} else if (alias == "off_color") {
 			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_bar: 'off_color' argument must be a VARCHAR");
@@ -228,15 +257,23 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 		}
 	}
 
-	if (width < 1) {
-		throw BinderException("tp_bar: 'width' argument must be at least 1");
-	}
+	TextplotValidateWidth("tp_bar", width);
 
 	if (min >= max) {
 		throw BinderException("tp_bar: 'min' must be less than 'max'");
 	}
+	if (!Value::DoubleIsFinite(min) || !Value::DoubleIsFinite(max)) {
+		throw BinderException("tp_bar: 'min' and 'max' must be finite");
+	}
 
-	return make_uniq<TextplotBarBindData>(min, max, width, on, off, filled, thresholds, shape, on_color, off_color);
+	// Resolve every colour that can be reached at runtime now, so a typo surfaces as a binder
+	// error instead of being thrown from inside the execute loop. Colours are only consulted
+	// when the corresponding 'on'/'off' string is empty, so only validate what will be used.
+	auto bind_data =
+	    make_uniq<TextplotBarBindData>(min, max, width, on, off, filled, thresholds, shape, on_color, off_color);
+	bind_data->validate_colors();
+
+	return std::move(bind_data);
 }
 
 void TextplotBar(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -244,29 +281,39 @@ void TextplotBar(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &bind_data = func_expr.bind_info->Cast<TextplotBarBindData>();
 
-	UnaryExecutor::Execute<double, string_t>(value_vector, result, args.size(), [&](double value) {
-		double proportion;
-		if (bind_data.max == bind_data.min) {
-			// Avoid division by zero: if value equals min/max, show full bar; otherwise empty
-			proportion = (value >= bind_data.min) ? 1.0 : 0.0;
-		} else {
-			proportion = std::clamp((value - bind_data.min) / (bind_data.max - bind_data.min), 0.0, 1.0);
-		}
-		const auto filled_blocks = static_cast<int64_t>(std::round(bind_data.width * proportion));
+	UnaryExecutor::ExecuteWithNulls<double, string_t>(
+	    value_vector, result, args.size(), [&](double value, ValidityMask &mask, idx_t row_idx) {
+		    if (std::isnan(value)) {
+			    // NaN has no position on the bar, and rounding it to an integer block count is
+			    // undefined behaviour; report it as NULL instead.
+			    mask.SetInvalid(row_idx);
+			    return string_t();
+		    }
 
-		string bar;
-		bar.reserve(bind_data.width * 4); // Reserve space for potential multi-byte characters
-		for (int64_t i = 0; i < bind_data.width; i++) {
-			if (bind_data.filled) {
-				// Fill all blocks up to the proportion
-				bar += bind_data.get_character(value, i < filled_blocks);
-			} else {
-				// Only fill the transition point
-				bar += bind_data.get_character(value, i == filled_blocks - 1 && filled_blocks > 0);
-			}
-		}
-		return StringVector::AddString(result, bar);
-	});
+		    double proportion;
+		    if (bind_data.max == bind_data.min) {
+			    // Avoid division by zero: if value equals min/max, show full bar; otherwise empty
+			    proportion = (value >= bind_data.min) ? 1.0 : 0.0;
+		    } else {
+			    proportion = std::clamp((value - bind_data.min) / (bind_data.max - bind_data.min), 0.0, 1.0);
+		    }
+		    // proportion is in [0, 1] and width is capped at bind time, so this cannot overflow.
+		    const auto filled_blocks =
+		        static_cast<int64_t>(std::round(static_cast<double>(bind_data.width) * proportion));
+
+		    string bar;
+		    bar.reserve(static_cast<size_t>(bind_data.width) * 4); // Reserve space for potential multi-byte characters
+		    for (int64_t i = 0; i < bind_data.width; i++) {
+			    if (bind_data.filled) {
+				    // Fill all blocks up to the proportion
+				    bar += bind_data.get_character(value, i < filled_blocks);
+			    } else {
+				    // Only fill the transition point
+				    bar += bind_data.get_character(value, filled_blocks > 0 && i == filled_blocks - 1);
+			    }
+		    }
+		    return StringVector::AddString(result, bar);
+	    });
 }
 
 } // namespace duckdb

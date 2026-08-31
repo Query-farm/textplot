@@ -21,6 +21,7 @@ find_package(unofficial-nayuki-qr-code-generator CONFIG REQUIRED)
 
 set(EXTENSION_SOURCES
     src/textplot_extension.cpp
+    src/textplot_common.cpp
     src/textplot_bar.cpp
     src/textplot_density.cpp
     src/textplot_sparkline.cpp

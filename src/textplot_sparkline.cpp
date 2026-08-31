@@ -1,4 +1,5 @@
 #include "textplot_sparkline.hpp"
+#include "textplot_common.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
@@ -105,7 +106,7 @@ const std::unordered_map<std::string, std::vector<std::string>> EnhancedSparklin
 /**
  * Generate sparkline showing absolute values (original behavior)
  */
-std::string generateAbsoluteSparkline(const double *data, int size, int width,
+std::string generateAbsoluteSparkline(const double *data, int64_t size, int64_t width,
                                       const std::vector<std::string> &characters) {
 	if (size == 0 || width == 0 || characters.empty())
 		return "";
@@ -114,21 +115,21 @@ std::string generateAbsoluteSparkline(const double *data, int size, int width,
 	double max_val = *std::max_element(data, data + size);
 
 	if (max_val == min_val) {
-		int mid_idx = characters.size() / 2;
+		const auto mid_idx = static_cast<int64_t>(characters.size()) / 2;
 		std::string result;
-		for (int i = 0; i < width; i++) {
+		for (int64_t i = 0; i < width; i++) {
 			result += characters[mid_idx];
 		}
 		return result;
 	}
 
 	std::string result;
-	double data_per_char = static_cast<double>(size) / width;
-	int max_level = static_cast<int>(characters.size()) - 1;
+	double data_per_char = static_cast<double>(size) / static_cast<double>(width);
+	const auto max_level = static_cast<int64_t>(characters.size()) - 1;
 
-	for (int i = 0; i < width; i++) {
-		int start_idx = static_cast<int>(i * data_per_char);
-		int end_idx = static_cast<int>((i + 1) * data_per_char);
+	for (int64_t i = 0; i < width; i++) {
+		int64_t start_idx = static_cast<int64_t>(static_cast<double>(i) * data_per_char);
+		int64_t end_idx = static_cast<int64_t>(static_cast<double>(i + 1) * data_per_char);
 		// Clamp indices to valid range
 		if (start_idx >= size)
 			start_idx = size - 1;
@@ -141,14 +142,14 @@ std::string generateAbsoluteSparkline(const double *data, int size, int width,
 			end_idx = size;
 
 		double sum = 0.0;
-		for (int j = start_idx; j < end_idx; j++) {
+		for (int64_t j = start_idx; j < end_idx; j++) {
 			sum += data[j];
 		}
-		double avg_val = sum / (end_idx - start_idx);
+		double avg_val = sum / static_cast<double>(end_idx - start_idx);
 
 		double normalized = (avg_val - min_val) / (max_val - min_val);
-		int level = static_cast<int>(std::round(normalized * max_level));
-		level = std::max(0, std::min(max_level, level));
+		auto level = static_cast<int64_t>(std::round(normalized * static_cast<double>(max_level)));
+		level = std::max(static_cast<int64_t>(0), std::min(max_level, level));
 
 		result += characters[level];
 	}
@@ -159,16 +160,17 @@ std::string generateAbsoluteSparkline(const double *data, int size, int width,
 /**
  * Generate sparkline showing directional change (delta mode)
  */
-std::string generateDeltaSparkline(const double *data, int size, int width,
+std::string generateDeltaSparkline(const double *data, int64_t size, int64_t width,
                                    const std::vector<std::string> &characters) {
 	if (size < 2 || width == 0 || characters.size() < 3)
 		return "";
 
 	std::string result;
-	double data_per_char = static_cast<double>(size - 1) / width; // -1 because we're looking at changes
+	// -1 because we're looking at changes
+	double data_per_char = static_cast<double>(size - 1) / static_cast<double>(width);
 
-	for (int i = 0; i < width; i++) {
-		int idx = static_cast<int>(i * data_per_char);
+	for (int64_t i = 0; i < width; i++) {
+		auto idx = static_cast<int64_t>(static_cast<double>(i) * data_per_char);
 		if (idx >= size - 1)
 			idx = size - 2;
 
@@ -192,14 +194,14 @@ std::string generateDeltaSparkline(const double *data, int size, int width,
 /**
  * Generate sparkline showing trend with magnitude
  */
-std::string generateTrendSparkline(const double *data, int size, int width,
+std::string generateTrendSparkline(const double *data, int64_t size, int64_t width,
                                    const std::vector<std::string> &characters) {
 	if (size < 2 || width == 0 || characters.size() < 5)
 		return "";
 
 	// Calculate all changes to determine thresholds
 	std::vector<double> changes;
-	for (int i = 0; i < size - 1; i++) {
+	for (int64_t i = 0; i < size - 1; i++) {
 		changes.push_back(data[i + 1] - data[i]);
 	}
 
@@ -218,12 +220,13 @@ std::string generateTrendSparkline(const double *data, int size, int width,
 	}
 
 	std::string result;
-	double data_per_char = static_cast<double>(changes.size()) / width;
+	const auto change_count = static_cast<int64_t>(changes.size());
+	double data_per_char = static_cast<double>(change_count) / static_cast<double>(width);
 
-	for (int i = 0; i < width; i++) {
-		int idx = static_cast<int>(i * data_per_char);
-		if (idx >= static_cast<int>(changes.size()))
-			idx = changes.size() - 1;
+	for (int64_t i = 0; i < width; i++) {
+		auto idx = static_cast<int64_t>(static_cast<double>(i) * data_per_char);
+		if (idx >= change_count)
+			idx = change_count - 1;
 
 		double change = changes[idx];
 		int level = 2; // default to same (middle)
@@ -243,21 +246,22 @@ std::string generateTrendSparkline(const double *data, int size, int width,
 /**
  * Main sparkline generation function
  */
-std::string generateSparkline(const std::vector<double> &data, int width, const std::string &themeName,
+std::string generateSparkline(const std::vector<double> &data, int64_t width, const std::string &themeName,
                               SparklineMode mode = SparklineMode::ABSOLUTE) {
 	if (data.empty())
 		return "";
 
 	auto characters = EnhancedSparklineThemes::getTheme(themeName, mode);
+	const auto size = static_cast<int64_t>(data.size());
 
 	switch (mode) {
 	case SparklineMode::DELTA:
-		return generateDeltaSparkline(data.data(), data.size(), width, characters);
+		return generateDeltaSparkline(data.data(), size, width, characters);
 	case SparklineMode::TREND:
-		return generateTrendSparkline(data.data(), data.size(), width, characters);
+		return generateTrendSparkline(data.data(), size, width, characters);
 	case SparklineMode::ABSOLUTE:
 	default:
-		return generateAbsoluteSparkline(data.data(), data.size(), width, characters);
+		return generateAbsoluteSparkline(data.data(), size, width, characters);
 	}
 }
 
@@ -293,9 +297,7 @@ unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFun
 		throw BinderException("tp_sparkline takes at least one argument");
 	}
 
-	const auto &first_arg = arguments[0]->return_type;
-	if (!first_arg.IsNested() || first_arg.InternalType() != PhysicalType::LIST ||
-	    !ListType::GetChildType(first_arg).IsNumeric()) {
+	if (!TextplotIsNumericList(arguments[0]->return_type)) {
 		throw InvalidTypeException("tp_sparkline first argument must be a list of numeric values");
 	}
 
@@ -364,9 +366,7 @@ unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFun
 		                                         theme, specified_mode, StringUtil::Join(available_themes, ", ")));
 	}
 
-	if (width < 1) {
-		throw BinderException("tp_sparkline: 'width' argument must be at least 1");
-	}
+	TextplotValidateWidth("tp_sparkline", width);
 
 	return make_uniq<TextplotSparklineBindData>(mode, theme, width);
 }
@@ -375,22 +375,14 @@ void TextplotSparkline(DataChunk &args, ExpressionState &state, Vector &result) 
 	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &bind_data = func_expr.bind_info->Cast<TextplotSparklineBindData>();
 
-	auto &value_vector = args.data[0];
-	Vector input_data(LogicalType::LIST(LogicalType::DOUBLE));
-	VectorOperations::Cast(state.GetContext(), value_vector, input_data, args.size());
+	TextplotListReader reader(state.GetContext(), args.data[0], args.size());
 
-	auto &child_data = ListVector::GetEntry(input_data);
-	auto source_data = FlatVector::GetData<double>(child_data);
+	std::vector<double> data_items;
+	UnaryExecutor::Execute<list_entry_t, string_t>(reader.GetVector(), result, args.size(), [&](list_entry_t values) {
+		reader.Extract(values, data_items);
 
-	UnaryExecutor::Execute<list_entry_t, string_t>(input_data, result, args.size(), [&](list_entry_t values) {
-		std::vector<double> data_items;
-		data_items.reserve(values.length);
-
-		for (auto i = values.offset; i < values.offset + values.length; i++) {
-			data_items.push_back(source_data[i]);
-		}
-
-		if (data_items.empty() || bind_data.width <= 0) {
+		// An empty list, or one holding only NULL/NaN/Inf, has nothing to plot.
+		if (data_items.empty()) {
 			return StringVector::AddString(result, "");
 		}
 
