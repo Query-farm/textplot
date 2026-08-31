@@ -37,18 +37,27 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// tp_qr: QR code generation
 	{
-		auto qr_function = ScalarFunction("tp_qr", {LogicalType::VARCHAR}, LogicalType::VARCHAR, TextplotQR,
-		                                  TextplotQRBind, nullptr, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
-		CreateScalarFunctionInfo info(std::move(qr_function));
+		ScalarFunctionSet qr_functions("tp_qr");
+		for (const auto &input_type : {LogicalType::VARCHAR, LogicalType::BLOB}) {
+			qr_functions.AddFunction(ScalarFunction("tp_qr", {input_type}, LogicalType::VARCHAR, TextplotQR,
+			                                        TextplotQRBind, nullptr, nullptr, nullptr,
+			                                        LogicalType(LogicalTypeId::ANY)));
+		}
+		CreateScalarFunctionInfo info(std::move(qr_functions));
 
-		FunctionDescription desc;
-		desc.description = "Generates a text-based QR code from a string or blob. "
-		                   "Supports configurable error correction levels and custom on/off characters.";
-		desc.parameter_names = {"data", "ecc", "on", "off"};
-		desc.examples = {"tp_qr('https://duckdb.org')",
-		                 "tp_qr('https://example.com', ecc := 'high')",
-		                 "tp_qr('Hello, world!', \"on\" := '##', off := '  ')"};
-		info.descriptions.push_back(std::move(desc));
+		// duckdb_functions() matches a description to an overload on parameter_types, so a set
+		// needs one fully-typed description per overload.
+		for (const auto &input_type : {LogicalType::VARCHAR, LogicalType::BLOB}) {
+			FunctionDescription desc;
+			desc.description = "Generates a text-based QR code from a string or blob. "
+			                   "Supports configurable error correction levels and custom on/off characters.";
+			desc.parameter_names = {"data", "ecc", "on", "off"};
+			desc.parameter_types = {input_type};
+			desc.examples = {"tp_qr('https://duckdb.org')", "tp_qr('https://example.com', ecc := 'high')",
+			                 "tp_qr('Hello, world!', \"on\" := '##', off := '  ')",
+			                 "tp_qr('\\xDE\\xAD\\xBE\\xEF'::BLOB)"};
+			info.descriptions.push_back(std::move(desc));
+		}
 
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 		loader.RegisterFunction(std::move(info));
@@ -64,11 +73,14 @@ static void LoadInternal(ExtensionLoader &loader) {
 		FunctionDescription desc;
 		desc.description = "Creates a density plot (histogram) visualization from an array of numeric values. "
 		                   "Supports multiple styles: shaded, dots, ascii, height, circles, safety, rainbow_circle, "
-		                   "rainbow_square, moon, sparse, and white.";
-		desc.parameter_names = {"values", "width", "style", "marker", "graph_chars"};
+		                   "rainbow_square, moon, sparse, and white. Pass 'marker_value' to highlight the bin "
+		                   "containing a particular value, optionally with a custom 'marker' character.";
+		desc.parameter_names = {"values", "width", "style", "marker", "marker_value", "graph_chars"};
 		desc.examples = {"tp_density([1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0])",
 		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], width := 40)",
 		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], style := 'height')",
+		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], marker_value := 3.0)",
+		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], marker := '|', marker_value := 4.0)",
 		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], "
 		                 "style := 'rainbow_square', width := 30)"};
 		info.descriptions.push_back(std::move(desc));
@@ -115,7 +127,7 @@ std::string TextplotExtension::Name() {
 }
 
 std::string TextplotExtension::Version() const {
-	return "2026072501";
+	return "2026083001";
 }
 
 } // namespace duckdb

@@ -1,0 +1,301 @@
+# name: test/sql/textplot_edge_cases.test
+# description: NULL, empty, non-finite and out-of-range handling for the textplot functions
+# group: [sql]
+
+require textplot
+
+# ------------------------------------------------------------------
+# Empty lists bind and evaluate instead of raising "Invalid type"
+# ------------------------------------------------------------------
+
+query TT
+SELECT '[' || tp_sparkline([]) || ']', '[' || tp_density([]) || ']';
+----
+[]	[]
+
+query TT
+SELECT '[' || tp_sparkline([]::DOUBLE[]) || ']', '[' || tp_density([]::DOUBLE[]) || ']';
+----
+[]	[]
+
+# ------------------------------------------------------------------
+# NULL elements are skipped rather than read as uninitialized memory
+# ------------------------------------------------------------------
+
+query T
+SELECT tp_sparkline([NULL, 1.0]);
+----
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+
+query T
+SELECT tp_sparkline([NULL::DOUBLE, 1.0, 2.0, NULL]);
+----
+          ██████████
+
+query T
+SELECT tp_density([NULL::DOUBLE, 1.0, 2.0, 3.0, NULL], width := 6);
+----
+█  █ █
+
+# A list of only NULL has nothing to plot, and must be deterministic.
+query TT
+SELECT '[' || tp_sparkline(list(NULL::DOUBLE)) || ']', '[' || tp_density(list(NULL::DOUBLE)) || ']' FROM range(40);
+----
+[]	[]
+
+query T
+SELECT count(DISTINCT s) FROM (
+  SELECT (SELECT tp_sparkline(list(NULL::DOUBLE)) FROM range(40)) AS s FROM range(200)
+);
+----
+1
+
+# A NULL list is NULL, not an empty string.
+query TT
+SELECT tp_sparkline(NULL::DOUBLE[]), tp_density(NULL::DOUBLE[]);
+----
+NULL	NULL
+
+# ------------------------------------------------------------------
+# Non-finite values cannot be plotted and are skipped like NULL
+# ------------------------------------------------------------------
+
+query TT
+SELECT tp_sparkline([1.0, 'nan'::DOUBLE, 3.0]), tp_sparkline(['inf'::DOUBLE, '-inf'::DOUBLE, 1.0, 2.0]);
+----
+          ██████████	          ██████████
+
+query T
+SELECT '[' || tp_sparkline(['nan'::DOUBLE, 'inf'::DOUBLE]) || ']';
+----
+[]
+
+# tp_bar cannot place NaN on the bar; NULL is the only honest answer.
+query TTT
+SELECT tp_bar('nan'::DOUBLE), tp_bar('nan'::DOUBLE, filled := false), tp_bar('inf'::DOUBLE);
+----
+NULL	NULL	🟥🟥🟥🟥🟥🟥🟥🟥🟥🟥
+
+# ------------------------------------------------------------------
+# List children that are not flat vectors (dictionary/sliced/sorted)
+# ------------------------------------------------------------------
+
+query T
+SELECT tp_sparkline(list_sort(l), width := 8) FROM (
+  SELECT list(CASE WHEN i % 3 = 0 THEN NULL ELSE i::DOUBLE END) l FROM range(12) t(i)
+);
+----
+ ▁▂▃▅▆▇█
+
+query T
+SELECT tp_sparkline(list_slice(l, 3, 9), width := 6) FROM (
+  SELECT list(i::DOUBLE) l FROM range(12) t(i)
+);
+----
+ ▁▃▄▅▇
+
+# bracketed: the result ends in a space, which the test format would strip
+query T
+SELECT '[' || tp_sparkline(list_distinct(l), width := 6) || ']' FROM (
+  SELECT list((i % 4)::DOUBLE) l FROM range(12) t(i)
+);
+----
+[██▅▃▃ ]
+
+# The shape the original bug report used: list aggregation inside a scalar subquery
+# feeding a UNION ALL.
+query TT
+SELECT 'a', (SELECT tp_sparkline(list(cnt ORDER BY b), width := 6) FROM (SELECT i AS b, (i * 2)::DOUBLE AS cnt FROM range(6) t(i)))
+UNION ALL
+SELECT 'b', (SELECT tp_sparkline(list(cnt ORDER BY b), width := 6) FROM (SELECT i AS b, (i * 2)::DOUBLE AS cnt FROM range(6) t(i)));
+----
+a	 ▂▃▅▆█
+b	 ▂▃▅▆█
+
+# ------------------------------------------------------------------
+# 'width' is bounded so the result cannot overflow string_t's uint32 length
+# ------------------------------------------------------------------
+
+statement error
+SELECT tp_bar(1.0, width := 1073741824);
+----
+'width' argument must be at most 1000000
+
+statement error
+SELECT tp_sparkline([1.0, 2.0], width := 2000000);
+----
+'width' argument must be at most 1000000
+
+statement error
+SELECT tp_density([1.0, 2.0], width := 2000000);
+----
+'width' argument must be at most 1000000
+
+statement error
+SELECT tp_density([1.0, 2.0], width := 0);
+----
+'width' argument must be at least 1
+
+query T
+SELECT length(tp_bar(1.0, width := 1000000));
+----
+1000000
+
+statement error
+SELECT tp_bar(0.5, "on" := repeat('x', 300));
+----
+'on' argument must be at most 256 bytes
+
+# ------------------------------------------------------------------
+# tp_bar: NULL thresholds raised INTERNAL errors instead of binder errors
+# ------------------------------------------------------------------
+
+statement error
+SELECT tp_bar(0.5, thresholds := [NULL::STRUCT(t DOUBLE, c VARCHAR)]);
+----
+'thresholds' child struct must not be NULL
+
+statement error
+SELECT tp_bar(0.5, thresholds := [{'t': NULL::DOUBLE, 'c': 'red'}]);
+----
+'thresholds' child struct fields must not be NULL
+
+statement error
+SELECT tp_bar(0.5, thresholds := [{'t': 0.1, 'c': NULL::VARCHAR}]);
+----
+'thresholds' child struct fields must not be NULL
+
+statement error
+SELECT tp_bar(0.5, thresholds := [{'t': 'nan'::DOUBLE, 'c': 'red'}]);
+----
+'threshold' must be finite
+
+# Unknown colours are reported at bind time, not thrown from the execute loop.
+statement error
+SELECT tp_bar(0.5, thresholds := [{'t': 0.1, 'c': 'chartreuse'}]);
+----
+Unknown color value 'chartreuse'
+
+statement error
+SELECT tp_bar(0.5, on_color := 'nope');
+----
+Unknown color value 'nope'
+
+# ... but only for colours that are actually reachable: an explicit 'on' string wins.
+query T
+SELECT tp_bar(0.5, on_color := 'nope', "on" := 'X');
+----
+XXXXX⬜⬜⬜⬜⬜
+
+query T
+SELECT tp_bar(0.8, thresholds := [{'t': 0.7, 'c': 'green'}, {'t': 0.3, 'c': 'yellow'}, {'t': 0.0, 'c': 'red'}]);
+----
+🟩🟩🟩🟩🟩🟩🟩🟩⬜⬜
+
+# ------------------------------------------------------------------
+# tp_density: 'graph_chars' was unreachable (VARCHAR and LIST were both required)
+# ------------------------------------------------------------------
+
+query T
+SELECT tp_density([1.0, 2.0, 3.0], graph_chars := ['.', 'o', 'O'], width := 6);
+----
+O..O.O
+
+statement error
+SELECT tp_density([1.0, 2.0, 3.0], graph_chars := []);
+----
+'graph_chars' argument must not be empty
+
+statement error
+SELECT tp_density([1.0, 2.0, 3.0], graph_chars := ['a', NULL]);
+----
+'graph_chars' child must not be NULL
+
+statement error
+SELECT tp_density([1.0, 2.0, 3.0], graph_chars := 'abc');
+----
+'graph_chars' argument must be a list of strings
+
+# ------------------------------------------------------------------
+# tp_qr: embedded NUL bytes must not truncate the payload
+# ------------------------------------------------------------------
+
+query TT
+SELECT md5(tp_qr('A' || chr(0) || 'B')) = md5(tp_qr('A')), md5(tp_qr('A' || chr(0) || 'B')) = md5(tp_qr('A' || chr(0) || 'C'));
+----
+false	false
+
+# BLOB is now an actual overload rather than a check the binder could never reach.
+query T
+SELECT tp_qr('\xDE\xAD\xBE\xEF'::BLOB) IS NOT NULL;
+----
+true
+
+query T
+SELECT length(tp_qr('https://duckdb.org')) > 0;
+----
+true
+
+statement error
+SELECT tp_qr('x', "on" := repeat('y', 300));
+----
+'on' argument must be at most 256 bytes
+
+statement error
+SELECT tp_density([1.0, 2.0, 3.0], graph_chars := ['.', 'o'], style := 'dots');
+----
+mutually exclusive
+
+# ------------------------------------------------------------------
+# tp_density: 'marker' had no effect at all (the marker value was hardcoded to NaN)
+# ------------------------------------------------------------------
+
+# marker_value highlights the bin containing that value; the default character is ▼
+query TTTT
+SELECT tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10),
+       tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10, marker_value := 1.0),
+       tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10, marker_value := 3.0),
+       tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10, marker_value := 5.0);
+----
+█ █  █ █ █	▼ █  █ █ █	█ █  ▼ █ █	█ █  █ █ ▼
+
+# 'marker' overrides the character.
+query T
+SELECT tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10, marker := '|', marker_value := 4.0);
+----
+█ █  █ | █
+
+# A value outside [min, max] draws no marker.
+query TT
+SELECT tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10, marker_value := 99.0),
+       tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10, marker_value := -99.0);
+----
+█ █  █ █ █	█ █  █ █ █
+
+# When every value is identical the marker covers the whole plot, or none of it.
+query TT
+SELECT tp_density([7.0, 7.0, 7.0], width := 6, marker := 'X', marker_value := 7.0),
+       tp_density([7.0, 7.0, 7.0], width := 6, marker := 'X', marker_value := 8.0);
+----
+XXXXXX	██████
+
+# NULL elements are still skipped, and do not shift the marker.
+query T
+SELECT tp_density([NULL::DOUBLE, 1.0, 2.0, 3.0, 4.0, 5.0, NULL], width := 10, marker_value := 3.0);
+----
+█ █  ▼ █ █
+
+statement error
+SELECT tp_density([1.0, 2.0], marker := 'X');
+----
+'marker' requires 'marker_value'
+
+statement error
+SELECT tp_density([1.0, 2.0], marker_value := 'nan'::DOUBLE);
+----
+'marker_value' argument must be finite
+
+statement error
+SELECT tp_density([1.0, 2.0], marker_value := 'x');
+----
+'marker_value' argument must be numeric
