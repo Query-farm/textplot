@@ -1,0 +1,211 @@
+# name: test/sql/textplot_named_parameters.test
+# description: the options are native keyword-only parameters with defaults
+# group: [sql]
+
+require textplot
+
+# ------------------------------------------------------------------
+# duckdb_functions() reports the declared parameter names and types
+# ------------------------------------------------------------------
+
+query III
+SELECT function_name, parameters, parameter_types
+FROM duckdb_functions()
+WHERE function_name IN ('tp_bar', 'tp_density', 'tp_sparkline', 'tp_qr')
+ORDER BY ALL;
+----
+tp_bar	[value, min, max, width, on, off, on_color, off_color, shape, filled, thresholds]	[DOUBLE, DOUBLE, DOUBLE, BIGINT, VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR, BOOLEAN, ANY]
+tp_density	[values, width, style, marker, marker_value, graph_chars]	['DOUBLE[]', BIGINT, VARCHAR, VARCHAR, DOUBLE, 'VARCHAR[]']
+tp_qr	[data, ecc, on, off]	[BLOB, VARCHAR, VARCHAR, VARCHAR]
+tp_qr	[data, ecc, on, off]	[VARCHAR, VARCHAR, VARCHAR, VARCHAR]
+tp_sparkline	[values, width, mode, theme]	['DOUBLE[]', BIGINT, VARCHAR, VARCHAR]
+
+# Every overload keeps its description and examples.
+query II
+SELECT function_name, count(*) FROM duckdb_functions()
+WHERE function_name LIKE 'tp\_%' ESCAPE '\' AND description IS NOT NULL AND len(examples) > 0
+GROUP BY ALL ORDER BY ALL;
+----
+tp_bar	1
+tp_density	1
+tp_qr	2
+tp_sparkline	1
+
+# ------------------------------------------------------------------
+# Omitted options take their defaults
+# ------------------------------------------------------------------
+
+query T
+SELECT tp_bar(0.7) = tp_bar(0.7, min := 0, max := 1, width := 10, "on" := '', off := '', on_color := 'red',
+                            off_color := 'white', shape := 'square', filled := true, thresholds := []);
+----
+true
+
+query T
+SELECT tp_density([1.0, 2.0, 3.0]) = tp_density([1.0, 2.0, 3.0], width := 20, style := 'shaded');
+----
+true
+
+query T
+SELECT tp_sparkline([1.0, 2.0, 3.0]) = tp_sparkline([1.0, 2.0, 3.0], width := 20, mode := 'absolute', theme := 'utf8_blocks');
+----
+true
+
+# The theme default follows the mode.
+query T
+SELECT tp_sparkline([1.0, 2.0, 1.0], mode := 'delta') = tp_sparkline([1.0, 2.0, 1.0], mode := 'delta', theme := 'arrows');
+----
+true
+
+query T
+SELECT tp_qr('hello') = tp_qr('hello', ecc := 'low', "on" := '⬛', off := '⬜');
+----
+true
+
+# Options can be given in any order.
+query T
+SELECT tp_bar(5, width := 4, max := 10, min := 0) = tp_bar(5, min := 0, max := 10, width := 4);
+----
+true
+
+# Values are cast to the declared parameter type.
+query T
+SELECT tp_bar(0.5, width := 4::UTINYINT, min := 0::INTEGER, filled := false);
+----
+⬜🟥⬜⬜
+
+# ------------------------------------------------------------------
+# Unknown, positional and non-constant options are rejected by the binder
+# ------------------------------------------------------------------
+
+statement error
+SELECT tp_bar(0.5, bogus := 1);
+----
+No function matches the given name and argument types
+
+statement error
+SELECT tp_sparkline([1.0, 2.0], colour := 'red');
+----
+No function matches the given name and argument types
+
+# The options are keyword-only.
+statement error
+SELECT tp_bar(0.5, 0, 1);
+----
+No function matches the given name and argument types
+
+statement error
+SELECT tp_qr('x', 'high');
+----
+No function matches the given name and argument types
+
+# Wrong types do not implicitly cast.
+statement error
+SELECT tp_bar(0.5, width := 2.5);
+----
+No function matches the given name and argument types
+
+statement error
+SELECT tp_density([1.0, 2.0], marker := 1);
+----
+No function matches the given name and argument types
+
+statement error
+SELECT tp_bar(0.5, width := i::INTEGER) FROM range(3) t(i);
+----
+must be a constant expression
+
+# Value validation still happens at bind time.
+statement error
+SELECT tp_bar(0.5, width := -1);
+----
+'width' argument must be at least 1
+
+statement error
+SELECT tp_bar(0.5, min := 1, max := 0);
+----
+'min' must be less than 'max'
+
+statement error
+SELECT tp_bar(0.5, shape := 'star');
+----
+'shape' argument must be one of
+
+statement error
+SELECT tp_bar(0.5, thresholds := 5);
+----
+'thresholds' argument must be a list of structs
+
+statement error
+SELECT tp_sparkline([1.0, 2.0], mode := 'sideways');
+----
+Unknown type 'sideways'
+
+statement error
+SELECT tp_sparkline([1.0, 2.0], mode := 'delta', theme := 'utf8_blocks');
+----
+Unknown theme 'utf8_blocks' for mode 'delta'
+
+statement error
+SELECT tp_density([1.0, 2.0], style := 'plaid');
+----
+Unknown style 'plaid'
+
+statement error
+SELECT tp_qr('x'::BLOB, ecc := 'bad');
+----
+'ecc' argument must be one of
+
+# 'thresholds' accepts any two-field struct, whatever the field names.
+query T
+SELECT tp_bar(0.5, thresholds := [{'threshold': 0.1, 'color': 'green'}]) = tp_bar(0.5, thresholds := [{'t': 0.1, 'c': 'green'}]);
+----
+true
+
+# ------------------------------------------------------------------
+# NULL options make the result NULL (default NULL handling)
+# ------------------------------------------------------------------
+
+query IIIII
+SELECT tp_bar(0.5, width := NULL), tp_density([1.0], style := NULL), tp_qr('x', ecc := NULL),
+       tp_sparkline([1.0], mode := NULL), tp_bar(0.5, thresholds := NULL);
+----
+NULL	NULL	NULL	NULL	NULL
+
+query II
+SELECT tp_bar(NULL), tp_bar(NULL, width := 3);
+----
+NULL	NULL
+
+# ------------------------------------------------------------------
+# Prepared statement parameters can supply options
+# ------------------------------------------------------------------
+
+statement ok
+PREPARE bar_width AS SELECT tp_bar(0.5, width := ?);
+
+query T
+EXECUTE bar_width(4);
+----
+🟥🟥⬜⬜
+
+statement error
+EXECUTE bar_width(0);
+----
+'width' argument must be at least 1
+
+statement ok
+PREPARE spark_mode AS SELECT tp_sparkline([1.0, 2.0, 3.0], mode := ?, width := 3);
+
+query T
+EXECUTE spark_mode('delta');
+----
+↑↑↑
+
+statement ok
+PREPARE density_marker AS SELECT tp_density([1.0, 2.0, 3.0, 4.0, 5.0], width := 10, marker_value := ?);
+
+query T
+EXECUTE density_marker(3.0);
+----
+█ █  ▼ █ █

@@ -4,7 +4,6 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/common/optional.hpp"
 #include <algorithm>
 #include <cmath>
@@ -123,143 +122,67 @@ bool TextplotBarBindData::Equals(const FunctionData &other_p) const {
 
 unique_ptr<FunctionData> TextplotBarBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
-	auto &arguments = input.GetArguments();
-	// Named arguments (e.g. width := 20) are reported through the argument names.
-	const auto argument_names = input.GetArgumentNames();
-	if (arguments.empty()) {
-		throw BinderException("tp_bar takes at least one argument");
-	}
 
-	if (!arguments[0]->GetReturnType().IsNumeric()) {
-		throw InvalidTypeException("tp_bar first argument must be numeric");
-	}
+	// The options are keyword-only parameters of the signature (see TextplotBarFunction): DuckDB has
+	// already matched the names, cast the values to the declared types and filled in the defaults.
+	// An explicit NULL option makes the whole call NULL before bind is reached (default NULL handling).
+	const auto min = input.GetNonNullConstant("min").GetValue<double>();
+	const auto max = input.GetNonNullConstant("max").GetValue<double>();
+	const auto width = input.GetNonNullConstant("width").GetValue<int64_t>();
+	const auto on = input.GetNonNullConstant("on").GetValue<string>();
+	const auto off = input.GetNonNullConstant("off").GetValue<string>();
+	const auto on_color = input.GetNonNullConstant("on_color").GetValue<string>();
+	const auto off_color = input.GetNonNullConstant("off_color").GetValue<string>();
+	auto shape = input.GetNonNullConstant("shape").GetValue<string>();
+	const auto filled = input.GetNonNullConstant("filled").GetValue<bool>();
 
-	// Optional arguments
-	double min = 0;
-	double max = 1.0;
-	int64_t width = 10;
-	string on = "";
-	string off = "";
-	string on_color = "";
-	string off_color = "";
-	string shape = "";
-	bool filled = true;
+	TextplotValidateCellString("tp_bar", "on", on);
+	TextplotValidateCellString("tp_bar", "off", off);
+
+	// 'thresholds' is declared ANY so that any list of two-field structs (whatever the field names)
+	// is accepted; its default is an empty list.
 	vector<std::pair<double, string>> thresholds;
-
-	for (idx_t i = 1; i < arguments.size(); i++) {
-		const auto &arg = arguments[i];
-		if (arg->HasParameter()) {
-			throw ParameterNotResolvedException();
-		}
-		if (!arg->IsFoldable()) {
-			throw BinderException("tp_bar: arguments must be constant");
-		}
-		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
-		if (alias == "min") {
-			if (!arg->GetReturnType().IsNumeric()) {
-				throw BinderException("tp_bar: 'min' argument must be numeric");
-			}
-			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
-			min = eval_result.CastAs(context, LogicalType::DOUBLE).GetValue<double>();
-		} else if (alias == "max") {
-			if (!arg->GetReturnType().IsNumeric()) {
-				throw BinderException("tp_bar: 'max' argument must be numeric");
-			}
-			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
-			max = eval_result.CastAs(context, LogicalType::DOUBLE).GetValue<double>();
-		} else if (alias == "thresholds") {
-			if (arg->GetReturnType().InternalType() != PhysicalType::LIST) {
-				throw BinderException(
-				    StringUtil::Format("tp_bar: 'thresholds' argument must be a list of structs it is %s",
-				                       arg->GetReturnType().ToString()));
-			}
-
-			const auto thresholds_value = ExpressionExecutor::EvaluateScalar(context, *arg);
-			if (thresholds_value.IsNull()) {
-				throw BinderException("tp_bar: 'thresholds' argument must not be NULL");
-			}
-			const auto list_children = ListValue::GetChildren(thresholds_value);
-			for (const auto &list_item : list_children) {
-				// These should also be lists.
-				if (list_item.type().InternalType() != PhysicalType::STRUCT) {
-					throw BinderException(
-					    StringUtil::Format("tp_bar: 'thresholds' child must be a struct it is %s value is %s",
-					                       list_item.type().ToString(), list_item.ToString()));
-				}
-				if (list_item.IsNull()) {
-					throw BinderException("tp_bar: 'thresholds' child struct must not be NULL");
-				}
-				// Here you can extract the fields from the struct if needed.
-				const auto struct_fields = StructValue::GetChildren(list_item);
-				if (struct_fields.size() != 2) {
-					throw BinderException(StringUtil::Format(
-					    "tp_bar: 'thresholds' child struct must have 2 fields it has %d", struct_fields.size()));
-				}
-				if (!struct_fields[0].type().IsNumeric()) {
-					throw BinderException(StringUtil::Format(
-					    "tp_bar: 'thresholds' child struct field 'threshold' must be numeric it is %s",
-					    struct_fields[0].type().ToString()));
-				}
-				if (struct_fields[0].IsNull() || struct_fields[1].IsNull()) {
-					throw BinderException("tp_bar: 'thresholds' child struct fields must not be NULL");
-				}
-				const double threshold = struct_fields[0].CastAs(context, LogicalType::DOUBLE).GetValue<double>();
-				if (!Value::DoubleIsFinite(threshold)) {
-					throw BinderException("tp_bar: 'thresholds' child struct field 'threshold' must be finite");
-				}
-				const string color = struct_fields[1].CastAs(context, LogicalType::VARCHAR).GetValue<string>();
-				thresholds.emplace_back(threshold, color);
-			}
-			std::sort(thresholds.begin(), thresholds.end(), [](const auto &a, const auto &b) {
-				return a.first > b.first; // descending by .first
-			});
-		} else if (alias == "width") {
-			if (!arg->GetReturnType().IsIntegral()) {
-				throw BinderException("tp_bar: 'width' argument must be an integer");
-			}
-			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
-			width = eval_result.CastAs(context, LogicalType::UBIGINT).GetValue<uint64_t>();
-		} else if (alias == "filled") {
-			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
-			filled = eval_result.CastAs(context, LogicalType::BOOLEAN).GetValue<bool>();
-		} else if (alias == "on") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_bar: 'on' argument must be a VARCHAR");
-			}
-			on = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-			TextplotValidateCellString("tp_bar", "on", on);
-		} else if (alias == "off") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_bar: 'off' argument must be a VARCHAR");
-			}
-			off = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-			TextplotValidateCellString("tp_bar", "off", off);
-		} else if (alias == "off_color") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_bar: 'off_color' argument must be a VARCHAR");
-			}
-			off_color = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-		} else if (alias == "on_color") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_bar: 'on_color' argument must be a VARCHAR");
-			}
-			on_color = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-		} else if (alias == "shape") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_bar: 'shape' argument must be a VARCHAR");
-			}
-			shape = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-		} else {
-			throw BinderException(StringUtil::Format("tp_bar: Unknown argument '%s'", alias));
-		}
+	const auto thresholds_value = input.GetNonNullConstant("thresholds");
+	if (thresholds_value.type().InternalType() != PhysicalType::LIST) {
+		throw BinderException(StringUtil::Format("tp_bar: 'thresholds' argument must be a list of structs it is %s",
+		                                         thresholds_value.type().ToString()));
 	}
+	for (const auto &list_item : ListValue::GetChildren(thresholds_value)) {
+		if (list_item.type().InternalType() != PhysicalType::STRUCT) {
+			throw BinderException(StringUtil::Format("tp_bar: 'thresholds' child must be a struct it is %s value is %s",
+			                                         list_item.type().ToString(), list_item.ToString()));
+		}
+		if (list_item.IsNull()) {
+			throw BinderException("tp_bar: 'thresholds' child struct must not be NULL");
+		}
+		const auto &struct_fields = StructValue::GetChildren(list_item);
+		if (struct_fields.size() != 2) {
+			throw BinderException(StringUtil::Format("tp_bar: 'thresholds' child struct must have 2 fields it has %d",
+			                                         struct_fields.size()));
+		}
+		if (!struct_fields[0].type().IsNumeric()) {
+			throw BinderException(
+			    StringUtil::Format("tp_bar: 'thresholds' child struct field 'threshold' must be numeric it is %s",
+			                       struct_fields[0].type().ToString()));
+		}
+		if (struct_fields[0].IsNull() || struct_fields[1].IsNull()) {
+			throw BinderException("tp_bar: 'thresholds' child struct fields must not be NULL");
+		}
+		const double threshold = struct_fields[0].CastAs(context, LogicalType::DOUBLE).GetValue<double>();
+		if (!Value::DoubleIsFinite(threshold)) {
+			throw BinderException("tp_bar: 'thresholds' child struct field 'threshold' must be finite");
+		}
+		const string color = struct_fields[1].CastAs(context, LogicalType::VARCHAR).GetValue<string>();
+		thresholds.emplace_back(threshold, color);
+	}
+	std::sort(thresholds.begin(), thresholds.end(), [](const auto &a, const auto &b) {
+		return a.first > b.first; // descending by .first
+	});
 
 	if (shape.empty()) {
 		shape = "square";
-	} else {
-		if (shape != "square" && shape != "circle" && shape != "heart") {
-			throw BinderException("tp_bar: 'shape' argument must be one of 'square', 'circle', 'heart'");
-		}
+	} else if (shape != "square" && shape != "circle" && shape != "heart") {
+		throw BinderException("tp_bar: 'shape' argument must be one of 'square', 'circle', 'heart'");
 	}
 
 	TextplotValidateWidth("tp_bar", width);
@@ -279,6 +202,28 @@ unique_ptr<FunctionData> TextplotBarBind(BindScalarFunctionInput &input) {
 	bind_data->validate_colors();
 
 	return std::move(bind_data);
+}
+
+ScalarFunction TextplotBarFunction() {
+	ScalarFunction function("tp_bar", vector<LogicalType> {}, LogicalType::VARCHAR, TextplotBar, TextplotBarBind);
+	// tp_bar(value, *, min, max, width, on, off, on_color, off_color, shape, filled, thresholds)
+	function.GetSignature()
+	    .AddPositionalOnly("value", LogicalType::DOUBLE)
+	    .AddKeywordOnly("min", LogicalType::DOUBLE, Value::DOUBLE(0))
+	    .AddKeywordOnly("max", LogicalType::DOUBLE, Value::DOUBLE(1))
+	    .AddKeywordOnly("width", LogicalType::BIGINT, Value::BIGINT(10))
+	    // An empty 'on'/'off' string draws a coloured emoji of the chosen shape instead.
+	    .AddKeywordOnly("on", LogicalType::VARCHAR, Value(""))
+	    .AddKeywordOnly("off", LogicalType::VARCHAR, Value(""))
+	    .AddKeywordOnly("on_color", LogicalType::VARCHAR, Value("red"))
+	    .AddKeywordOnly("off_color", LogicalType::VARCHAR, Value("white"))
+	    .AddKeywordOnly("shape", LogicalType::VARCHAR, Value("square"))
+	    .AddKeywordOnly("filled", LogicalType::BOOLEAN, Value::BOOLEAN(true))
+	    .AddKeywordOnly(
+	        "thresholds", LogicalType::ANY,
+	        Value::LIST(LogicalType::STRUCT({{"threshold", LogicalType::DOUBLE}, {"color", LogicalType::VARCHAR}}),
+	                    vector<Value> {}));
+	return function;
 }
 
 void TextplotBar(DataChunk &args, ExpressionState &state, Vector &result) {

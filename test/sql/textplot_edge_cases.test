@@ -212,10 +212,11 @@ SELECT tp_density([1.0, 2.0, 3.0], graph_chars := ['.', 'o', 'O'], width := 6);
 ----
 O..O.O
 
-statement error
-SELECT tp_density([1.0, 2.0, 3.0], graph_chars := []);
+# An empty 'graph_chars' list is the parameter's default: it means "use 'style'".
+query T
+SELECT tp_density([1.0, 2.0, 3.0], graph_chars := []) = tp_density([1.0, 2.0, 3.0]);
 ----
-'graph_chars' argument must not be empty
+true
 
 statement error
 SELECT tp_density([1.0, 2.0, 3.0], graph_chars := ['a', NULL]);
@@ -225,7 +226,7 @@ SELECT tp_density([1.0, 2.0, 3.0], graph_chars := ['a', NULL]);
 statement error
 SELECT tp_density([1.0, 2.0, 3.0], graph_chars := 'abc');
 ----
-'graph_chars' argument must be a list of strings
+can't be cast to the destination type VARCHAR[]
 
 # ------------------------------------------------------------------
 # tp_qr: embedded NUL bytes must not truncate the payload
@@ -301,12 +302,23 @@ SELECT tp_density([1.0, 2.0], marker := 'X');
 ----
 'marker' requires 'marker_value'
 
+# NaN is the parameter's default, meaning "no marker".
+query T
+SELECT tp_density([1.0, 2.0], marker_value := 'nan'::DOUBLE) = tp_density([1.0, 2.0]);
+----
+true
+
 statement error
-SELECT tp_density([1.0, 2.0], marker_value := 'nan'::DOUBLE);
+SELECT tp_density([1.0, 2.0], marker := 'X', marker_value := 'nan'::DOUBLE);
+----
+'marker' requires 'marker_value'
+
+statement error
+SELECT tp_density([1.0, 2.0], marker_value := 'inf'::DOUBLE);
 ----
 'marker_value' argument must be finite
 
 statement error
 SELECT tp_density([1.0, 2.0], marker_value := 'x');
 ----
-'marker_value' argument must be numeric
+Could not convert string 'x' to DOUBLE

@@ -4,7 +4,6 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/execution/expression_executor.hpp"
 #include <algorithm>
 
 namespace duckdb {
@@ -292,52 +291,17 @@ bool TextplotSparklineBindData::Equals(const FunctionData &other_p) const {
 }
 
 unique_ptr<FunctionData> TextplotSparklineBind(BindScalarFunctionInput &input) {
-	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
-	// Named arguments (e.g. width := 20) are reported through the argument names.
-	const auto argument_names = input.GetArgumentNames();
-	if (arguments.empty()) {
-		throw BinderException("tp_sparkline takes at least one argument");
-	}
-
 	if (!TextplotIsNumericList(arguments[0]->GetReturnType())) {
 		throw InvalidTypeException("tp_sparkline first argument must be a list of numeric values");
 	}
 
-	// Optional arguments
-	int64_t width = 20;
-	string theme = "";
-	string specified_mode = "absolute";
-
-	for (idx_t i = 1; i < arguments.size(); i++) {
-		const auto &arg = arguments[i];
-		if (arg->HasParameter()) {
-			throw ParameterNotResolvedException();
-		}
-		if (!arg->IsFoldable()) {
-			throw BinderException("tp_sparkline: arguments must be constant");
-		}
-		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
-		if (alias == "width") {
-			if (!arg->GetReturnType().IsIntegral()) {
-				throw BinderException("tp_sparkline: 'width' argument must be an integer");
-			}
-			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
-			width = eval_result.CastAs(context, LogicalType::UBIGINT).GetValue<uint64_t>();
-		} else if (alias == "theme") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_sparkline: 'theme' argument must be a VARCHAR");
-			}
-			theme = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-		} else if (alias == "mode") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_sparkline: 'mode' argument must be a VARCHAR");
-			}
-			specified_mode = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-		} else {
-			throw BinderException(StringUtil::Format("tp_sparkline: Unknown argument '%s'", alias));
-		}
-	}
+	// The options are keyword-only parameters of the signature (see TextplotSparklineFunction): DuckDB
+	// has already matched the names, cast the values to the declared types and filled in the defaults.
+	// An explicit NULL option makes the whole call NULL before bind is reached (default NULL handling).
+	const auto width = input.GetNonNullConstant("width").GetValue<int64_t>();
+	auto theme = input.GetNonNullConstant("theme").GetValue<string>();
+	const auto specified_mode = input.GetNonNullConstant("mode").GetValue<string>();
 
 	SparklineMode mode = SparklineMode::DELTA;
 	if (specified_mode == "delta") {
@@ -392,6 +356,21 @@ void TextplotSparkline(DataChunk &args, ExpressionState &state, Vector &result) 
 		return StringVector::AddString(result,
 		                               generateSparkline(data_items, bind_data.width, bind_data.theme, bind_data.mode));
 	});
+}
+
+ScalarFunction TextplotSparklineFunction() {
+	ScalarFunction function("tp_sparkline", vector<LogicalType> {}, LogicalType::VARCHAR, TextplotSparkline,
+	                        TextplotSparklineBind);
+	// tp_sparkline(values, *, width, mode, theme)
+	function.GetSignature()
+	    .AddPositionalOnly("values", LogicalType::LIST(LogicalType::DOUBLE))
+	    .AddKeywordOnly("width", LogicalType::BIGINT, Value::BIGINT(20))
+	    .AddKeywordOnly("mode", LogicalType::VARCHAR, Value("absolute"))
+	    // '' picks the mode's default theme: 'utf8_blocks' for absolute, 'arrows' for delta/trend.
+	    .AddKeywordOnly("theme", LogicalType::VARCHAR, Value(""));
+	// Casting the input list to LIST(DOUBLE) at execution time can raise an error.
+	function.SetFallible();
+	return function;
 }
 
 } // namespace duckdb

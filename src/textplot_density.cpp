@@ -4,7 +4,6 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include <algorithm>
 #include <cmath>
@@ -58,96 +57,35 @@ struct TextplotDensityBindData : public FunctionData {
 };
 
 unique_ptr<FunctionData> TextplotDensityBind(BindScalarFunctionInput &input) {
-	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
-	// Named arguments (e.g. width := 20) are reported through the argument names.
-	const auto argument_names = input.GetArgumentNames();
-	if (arguments.empty()) {
-		throw BinderException("tp_density takes at least one argument");
-	}
-
 	if (!TextplotIsNumericList(arguments[0]->GetReturnType())) {
 		throw InvalidTypeException("tp_density first argument must be a list of numeric values");
 	}
 
-	// Optional arguments
-	int64_t width = 20;
+	// The options are keyword-only parameters of the signature (see TextplotDensityFunction): DuckDB
+	// has already matched the names, cast the values to the declared types and filled in the defaults.
+	// An explicit NULL option makes the whole call NULL before bind is reached (default NULL handling),
+	// so the "not passed" defaults are non-NULL sentinels: '' for strings, NaN for 'marker_value' and
+	// an empty list for 'graph_chars'.
+	const auto width = input.GetNonNullConstant("width").GetValue<int64_t>();
+	auto style = input.GetNonNullConstant("style").GetValue<string>();
+	auto marker_char = input.GetNonNullConstant("marker").GetValue<string>();
+	const auto marker_value = input.GetNonNullConstant("marker_value").GetValue<double>();
+	const auto graph_chars_value = input.GetNonNullConstant("graph_chars");
+
+	TextplotValidateCellString("tp_density", "marker", marker_char);
+	if (std::isinf(marker_value)) {
+		throw BinderException("tp_density: 'marker_value' argument must be finite");
+	}
+
 	std::vector<std::string> graph_characters;
-	string marker_char;
-	double marker_value = std::nan("");
-	string style;
-
-	for (idx_t i = 1; i < arguments.size(); i++) {
-		const auto &arg = arguments[i];
-		if (arg->HasParameter()) {
-			throw ParameterNotResolvedException();
+	for (const auto &list_item : ListValue::GetChildren(graph_chars_value)) {
+		if (list_item.IsNull()) {
+			throw BinderException("tp_density: 'graph_chars' child must not be NULL");
 		}
-		if (!arg->IsFoldable()) {
-			throw BinderException("tp_density: arguments must be constant");
-		}
-		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
-		if (alias == "width") {
-			if (!arg->GetReturnType().IsIntegral()) {
-				throw BinderException("tp_density: 'width' argument must be an integer");
-			}
-			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
-			width = eval_result.CastAs(context, LogicalType::UBIGINT).GetValue<uint64_t>();
-		} else if (alias == "marker") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_density: 'marker' argument must be a VARCHAR");
-			}
-			marker_char = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-			TextplotValidateCellString("tp_density", "marker", marker_char);
-		} else if (alias == "marker_value") {
-			if (!arg->GetReturnType().IsNumeric()) {
-				throw BinderException("tp_density: 'marker_value' argument must be numeric");
-			}
-			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
-			if (eval_result.IsNull()) {
-				throw BinderException("tp_density: 'marker_value' argument must not be NULL");
-			}
-			marker_value = eval_result.CastAs(context, LogicalType::DOUBLE).GetValue<double>();
-			if (!Value::DoubleIsFinite(marker_value)) {
-				throw BinderException("tp_density: 'marker_value' argument must be finite");
-			}
-		} else if (alias == "graph_chars") {
-			if (arg->GetReturnType().InternalType() != PhysicalType::LIST) {
-				throw BinderException(
-				    StringUtil::Format("tp_density: 'graph_chars' argument must be a list of strings it is %s",
-				                       arg->GetReturnType().ToString()));
-			}
-
-			const auto chars_value = ExpressionExecutor::EvaluateScalar(context, *arg);
-			if (chars_value.IsNull()) {
-				throw BinderException("tp_density: 'graph_chars' argument must not be NULL");
-			}
-			const auto list_children = ListValue::GetChildren(chars_value);
-			graph_characters.clear();
-			for (const auto &list_item : list_children) {
-				if (list_item.IsNull()) {
-					throw BinderException("tp_density: 'graph_chars' child must not be NULL");
-				}
-				if (list_item.type() != LogicalType::VARCHAR) {
-					throw BinderException(
-					    StringUtil::Format("tp_density: 'graph_chars' child must be a string it is %s value is %s",
-					                       list_item.type().ToString(), list_item.ToString()));
-				}
-				const auto character = StringValue::Get(list_item);
-				TextplotValidateCellString("tp_density", "graph_chars", character);
-				graph_characters.push_back(character);
-			}
-			if (graph_characters.empty()) {
-				throw BinderException("tp_density: 'graph_chars' argument must not be empty");
-			}
-
-		} else if (alias == "style") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_density: 'style' argument must be a VARCHAR");
-			}
-			style = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-		} else {
-			throw BinderException(StringUtil::Format("tp_density: Unknown argument '%s'", alias));
-		}
+		const auto character = StringValue::Get(list_item);
+		TextplotValidateCellString("tp_density", "graph_chars", character);
+		graph_characters.push_back(character);
 	}
 
 	if (!marker_char.empty() && std::isnan(marker_value)) {
@@ -177,6 +115,27 @@ unique_ptr<FunctionData> TextplotDensityBind(BindScalarFunctionInput &input) {
 	TextplotValidateWidth("tp_density", width);
 
 	return make_uniq<TextplotDensityBindData>(width, graph_characters, marker_char, marker_value);
+}
+
+ScalarFunction TextplotDensityFunction() {
+	ScalarFunction function("tp_density", vector<LogicalType> {}, LogicalType::VARCHAR, TextplotDensity,
+	                        TextplotDensityBind);
+	// tp_density(values, *, width, style, marker, marker_value, graph_chars)
+	function.GetSignature()
+	    .AddPositionalOnly("values", LogicalType::LIST(LogicalType::DOUBLE))
+	    .AddKeywordOnly("width", LogicalType::BIGINT, Value::BIGINT(20))
+	    // '' means 'shaded' unless 'graph_chars' is given; the two are mutually exclusive.
+	    .AddKeywordOnly("style", LogicalType::VARCHAR, Value(""))
+	    // '' means '▼' when 'marker_value' is given.
+	    .AddKeywordOnly("marker", LogicalType::VARCHAR, Value(""))
+	    // NaN means no marker.
+	    .AddKeywordOnly("marker_value", LogicalType::DOUBLE, Value::DOUBLE(std::nan("")))
+	    // An empty list means "use 'style'".
+	    .AddKeywordOnly("graph_chars", LogicalType::LIST(LogicalType::VARCHAR),
+	                    Value::LIST(LogicalType::VARCHAR, vector<Value> {}));
+	// Casting the input list to LIST(DOUBLE) at execution time can raise an error.
+	function.SetFallible();
+	return function;
 }
 
 void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result) {

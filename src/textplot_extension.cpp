@@ -11,17 +11,17 @@
 namespace duckdb {
 
 static void LoadInternal(ExtensionLoader &loader) {
+	// Each function declares its options as keyword-only parameters with defaults, so DuckDB matches
+	// the names, casts the values and fills in defaults; duckdb_functions() reports the parameter
+	// names and types straight from those signatures.
+
 	// tp_bar: Horizontal bar charts with thresholds and colors
 	{
-		auto bar_function = ScalarFunction("tp_bar", {LogicalType::DOUBLE}, LogicalType::VARCHAR, TextplotBar,
-		                                   TextplotBarBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
-		CreateScalarFunctionInfo info(std::move(bar_function));
+		CreateScalarFunctionInfo info(TextplotBarFunction());
 
 		FunctionDescription desc;
 		desc.description = "Creates a horizontal bar chart visualization from a numeric value. "
 		                   "Supports customizable width, colors, shapes (square/circle/heart), and color thresholds.";
-		desc.parameter_names = {"value", "min", "max", "width", "on", "off", "on_color", "off_color", "shape",
-		                        "filled", "thresholds"};
 		desc.examples = {"tp_bar(0.75)",
 		                 "tp_bar(75, min := 0, max := 100, width := 20)",
 		                 "tp_bar(0.5, \"on\" := '#', off := '-', width := 10)",
@@ -37,14 +37,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// tp_qr: QR code generation
 	{
-		ScalarFunctionSet qr_functions("tp_qr");
-		for (const auto &input_type : {LogicalType::VARCHAR, LogicalType::BLOB}) {
-			qr_functions.AddFunction(ScalarFunction("tp_qr", {input_type}, LogicalType::VARCHAR, TextplotQR,
-			                                        TextplotQRBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY)));
-		}
-		// QR encoding raises an error when the payload is too long for any QR code version.
-		qr_functions.SetFallible();
-		CreateScalarFunctionInfo info(std::move(qr_functions));
+		CreateScalarFunctionInfo info(TextplotQRFunctions());
 
 		// duckdb_functions() matches a description to an overload on parameter_types, so a set
 		// needs one fully-typed description per overload.
@@ -52,8 +45,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 			FunctionDescription desc;
 			desc.description = "Generates a text-based QR code from a string or blob. "
 			                   "Supports configurable error correction levels and custom on/off characters.";
-			desc.parameter_names = {"data", "ecc", "on", "off"};
-			desc.parameter_types = {input_type};
+			desc.parameter_types = {input_type, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
 			desc.examples = {"tp_qr('https://duckdb.org')", "tp_qr('https://example.com', ecc := 'high')",
 			                 "tp_qr('Hello, world!', \"on\" := '##', off := '  ')",
 			                 "tp_qr('\\xDE\\xAD\\xBE\\xEF'::BLOB)"};
@@ -66,19 +58,13 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// tp_density: Density plots/histograms from arrays
 	{
-		auto density_function =
-		    ScalarFunction("tp_density", {LogicalType::LIST(LogicalType::DOUBLE)}, LogicalType::VARCHAR,
-		                   TextplotDensity, TextplotDensityBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
-		// Casting the input list to LIST(DOUBLE) at execution time can raise an error.
-		density_function.SetFallible();
-		CreateScalarFunctionInfo info(std::move(density_function));
+		CreateScalarFunctionInfo info(TextplotDensityFunction());
 
 		FunctionDescription desc;
 		desc.description = "Creates a density plot (histogram) visualization from an array of numeric values. "
 		                   "Supports multiple styles: shaded, dots, ascii, height, circles, safety, rainbow_circle, "
 		                   "rainbow_square, moon, sparse, and white. Pass 'marker_value' to highlight the bin "
 		                   "containing a particular value, optionally with a custom 'marker' character.";
-		desc.parameter_names = {"values", "width", "style", "marker", "marker_value", "graph_chars"};
 		desc.examples = {"tp_density([1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0])",
 		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], width := 40)",
 		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], style := 'height')",
@@ -94,18 +80,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// tp_sparkline: Compact trend lines with multiple modes
 	{
-		auto sparkline_function =
-		    ScalarFunction("tp_sparkline", {LogicalType::LIST(LogicalType::DOUBLE)}, LogicalType::VARCHAR,
-		                   TextplotSparkline, TextplotSparklineBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
-		// Casting the input list to LIST(DOUBLE) at execution time can raise an error.
-		sparkline_function.SetFallible();
-		CreateScalarFunctionInfo info(std::move(sparkline_function));
+		CreateScalarFunctionInfo info(TextplotSparklineFunction());
 
 		FunctionDescription desc;
 		desc.description = "Creates a sparkline visualization from an array of numeric values. "
 		                   "Supports three modes: 'absolute' (height-based), 'delta' (up/down/same direction), "
 		                   "and 'trend' (direction with magnitude). Multiple themes available per mode.";
-		desc.parameter_names = {"values", "width", "mode", "theme"};
 		desc.examples = {"tp_sparkline([1.0, 2.0, 3.0, 4.0, 5.0])",
 		                 "tp_sparkline([1.0, 3.0, 2.0, 5.0, 4.0, 6.0], width := 20)",
 		                 "tp_sparkline([1.0, 2.0, 1.0, 3.0, 2.0], "
@@ -132,7 +112,7 @@ std::string TextplotExtension::Name() {
 }
 
 std::string TextplotExtension::Version() const {
-	return "2026102001";
+	return "2026102002";
 }
 
 } // namespace duckdb

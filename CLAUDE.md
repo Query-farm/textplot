@@ -45,7 +45,7 @@ Each visualization function has a corresponding implementation file:
 Each function follows the DuckDB scalar function pattern:
 - `Textplot*Bind()` - Validates and binds arguments at plan time
 - `Textplot*()` - Executes the function at runtime
-- Functions accept named parameters (e.g., `width := 20`, `style := 'ascii'`)
+- Options are declared as native keyword-only parameters with defaults in each `Textplot*Function()` signature (`GetSignature().AddPositionalOnly(...).AddKeywordOnly(name, type, default)`), so DuckDB matches names, casts values and fills defaults; bind reads them with `input.GetNonNullConstant("name")`. Callers pass them by name (e.g., `width := 20`, `style := 'ascii'`)
 
 ### Directory Structure
 - `src/` - C++ source files

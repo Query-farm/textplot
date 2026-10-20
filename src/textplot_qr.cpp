@@ -4,7 +4,6 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/execution/expression_executor.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -38,14 +37,7 @@ bool TextplotQRBindData::Equals(const FunctionData &other_p) const {
 }
 
 unique_ptr<FunctionData> TextplotQRBind(BindScalarFunctionInput &input) {
-	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
-	// Named arguments (e.g. width := 20) are reported through the argument names.
-	const auto argument_names = input.GetArgumentNames();
-	if (arguments.empty()) {
-		throw BinderException("tp_qr takes at least one argument");
-	}
-
 	if (arguments[0]->GetReturnType().id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
 	}
@@ -54,41 +46,14 @@ unique_ptr<FunctionData> TextplotQRBind(BindScalarFunctionInput &input) {
 		throw InvalidTypeException("tp_qr first argument must be a VARCHAR or BLOB");
 	}
 
-	// Optional arguments
-	string ecc = "low";
-	string on = "";
-	string off = "";
-
-	for (idx_t i = 1; i < arguments.size(); i++) {
-		const auto &arg = arguments[i];
-		if (arg->HasParameter()) {
-			throw ParameterNotResolvedException();
-		}
-		if (!arg->IsFoldable()) {
-			throw BinderException("tp_qr: arguments must be constant");
-		}
-		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
-		if (alias == "ecc") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_qr: 'ecc' argument must be a VARCHAR");
-			}
-			ecc = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-		} else if (alias == "on") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_qr: 'on' argument must be a VARCHAR");
-			}
-			on = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-			TextplotValidateCellString("tp_qr", "on", on);
-		} else if (alias == "off") {
-			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
-				throw BinderException("tp_qr: 'off' argument must be a VARCHAR");
-			}
-			off = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
-			TextplotValidateCellString("tp_qr", "off", off);
-		} else {
-			throw BinderException(StringUtil::Format("tp_qr: Unknown argument '%s'", alias));
-		}
-	}
+	// The options are keyword-only parameters of the signature (see TextplotQRFunctions): DuckDB has
+	// already matched the names, cast the values to VARCHAR and filled in the defaults. An explicit
+	// NULL option makes the whole call NULL before bind is reached (default NULL handling).
+	const auto ecc = input.GetNonNullConstant("ecc").GetValue<string>();
+	auto on = input.GetNonNullConstant("on").GetValue<string>();
+	auto off = input.GetNonNullConstant("off").GetValue<string>();
+	TextplotValidateCellString("tp_qr", "on", on);
+	TextplotValidateCellString("tp_qr", "off", off);
 
 	// Validate ECC at bind time
 	if (ecc != "low" && ecc != "medium" && ecc != "quartile" && ecc != "high") {
@@ -149,6 +114,24 @@ void TextplotQR(DataChunk &args, ExpressionState &state, Vector &result) {
 		}
 		return StringVector::AddString(result, result_str);
 	});
+}
+
+ScalarFunctionSet TextplotQRFunctions() {
+	ScalarFunctionSet set("tp_qr");
+	for (const auto &input_type : {LogicalType::VARCHAR, LogicalType::BLOB}) {
+		ScalarFunction function("tp_qr", vector<LogicalType> {}, LogicalType::VARCHAR, TextplotQR, TextplotQRBind);
+		// tp_qr(data, *, ecc, on, off)
+		function.GetSignature()
+		    .AddPositionalOnly("data", input_type)
+		    .AddKeywordOnly("ecc", LogicalType::VARCHAR, Value("low"))
+		    // An empty 'on'/'off' string means the default black/white square.
+		    .AddKeywordOnly("on", LogicalType::VARCHAR, Value(""))
+		    .AddKeywordOnly("off", LogicalType::VARCHAR, Value(""));
+		set.AddFunction(std::move(function));
+	}
+	// QR encoding raises an error when the payload is too long for any QR code version.
+	set.SetFallible();
+	return set;
 }
 
 } // namespace duckdb

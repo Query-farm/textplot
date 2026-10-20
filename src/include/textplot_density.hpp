@@ -11,6 +11,9 @@ namespace duckdb {
 // Function declarations
 unique_ptr<FunctionData> TextplotDensityBind(BindScalarFunctionInput &input);
 
+//! tp_density(values, *, width, style, marker, marker_value, graph_chars)
+ScalarFunction TextplotDensityFunction();
+
 void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result);
 
 } // namespace duckdb
