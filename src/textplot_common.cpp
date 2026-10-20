@@ -1,5 +1,8 @@
 #include "textplot_common.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/unified_vector_format.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 
 namespace duckdb {
 
@@ -36,11 +39,11 @@ TextplotListReader::TextplotListReader(ClientContext &context, Vector &source, i
 	VectorOperations::Cast(context, source, list_vector, count);
 
 	child_count = ListVector::GetListSize(list_vector);
-	auto &child_vector = ListVector::GetEntry(list_vector);
+	const auto &child_vector = ListVector::GetChild(list_vector);
 
 	// The child may be a dictionary or constant vector; ToUnifiedFormat gives us the selection
 	// vector and validity mask needed to index it correctly.
-	child_vector.ToUnifiedFormat(child_count, child_format);
+	child_vector.ToUnifiedFormat(child_format);
 	child_data = UnifiedVectorFormat::GetData<double>(child_format);
 }
 

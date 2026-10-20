@@ -57,13 +57,16 @@ struct TextplotDensityBindData : public FunctionData {
 	}
 };
 
-unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, ScalarFunction &bound_function,
-                                             vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> TextplotDensityBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &arguments = input.GetArguments();
+	// Named arguments (e.g. width := 20) are reported through the argument names.
+	const auto argument_names = input.GetArgumentNames();
 	if (arguments.empty()) {
 		throw BinderException("tp_density takes at least one argument");
 	}
 
-	if (!TextplotIsNumericList(arguments[0]->return_type)) {
+	if (!TextplotIsNumericList(arguments[0]->GetReturnType())) {
 		throw InvalidTypeException("tp_density first argument must be a list of numeric values");
 	}
 
@@ -82,21 +85,21 @@ unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, ScalarFunct
 		if (!arg->IsFoldable()) {
 			throw BinderException("tp_density: arguments must be constant");
 		}
-		const auto &alias = arg->GetAlias();
+		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
 		if (alias == "width") {
-			if (!arg->return_type.IsIntegral()) {
+			if (!arg->GetReturnType().IsIntegral()) {
 				throw BinderException("tp_density: 'width' argument must be an integer");
 			}
 			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			width = eval_result.CastAs(context, LogicalType::UBIGINT).GetValue<uint64_t>();
 		} else if (alias == "marker") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_density: 'marker' argument must be a VARCHAR");
 			}
 			marker_char = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 			TextplotValidateCellString("tp_density", "marker", marker_char);
 		} else if (alias == "marker_value") {
-			if (!arg->return_type.IsNumeric()) {
+			if (!arg->GetReturnType().IsNumeric()) {
 				throw BinderException("tp_density: 'marker_value' argument must be numeric");
 			}
 			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
@@ -108,10 +111,10 @@ unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, ScalarFunct
 				throw BinderException("tp_density: 'marker_value' argument must be finite");
 			}
 		} else if (alias == "graph_chars") {
-			if (arg->return_type.InternalType() != PhysicalType::LIST) {
+			if (arg->GetReturnType().InternalType() != PhysicalType::LIST) {
 				throw BinderException(
 				    StringUtil::Format("tp_density: 'graph_chars' argument must be a list of strings it is %s",
-				                       arg->return_type.ToString()));
+				                       arg->GetReturnType().ToString()));
 			}
 
 			const auto chars_value = ExpressionExecutor::EvaluateScalar(context, *arg);
@@ -138,7 +141,7 @@ unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, ScalarFunct
 			}
 
 		} else if (alias == "style") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_density: 'style' argument must be a VARCHAR");
 			}
 			style = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
@@ -178,12 +181,12 @@ unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, ScalarFunct
 
 void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto &bind_data = func_expr.bind_info->Cast<TextplotDensityBindData>();
+	const auto &bind_data = func_expr.BindInfo()->Cast<TextplotDensityBindData>();
 
 	TextplotListReader reader(state.GetContext(), args.data[0], args.size());
 
 	std::vector<double> data_items;
-	UnaryExecutor::Execute<list_entry_t, string_t>(reader.GetVector(), result, args.size(), [&](list_entry_t values) {
+	UnaryExecutor::Execute<list_entry_t, string_t>(reader.GetVector(), result, [&](list_entry_t values) {
 		reader.Extract(values, data_items);
 
 		// An empty list, or one holding only NULL/NaN/Inf, has nothing to plot.

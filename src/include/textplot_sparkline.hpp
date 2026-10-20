@@ -9,8 +9,7 @@
 namespace duckdb {
 
 // Function declarations
-unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFunction &bound_function,
-                                               vector<unique_ptr<Expression>> &arguments);
+unique_ptr<FunctionData> TextplotSparklineBind(BindScalarFunctionInput &input);
 
 void TextplotSparkline(DataChunk &args, ExpressionState &state, Vector &result);
 

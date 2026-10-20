@@ -37,17 +37,20 @@ bool TextplotQRBindData::Equals(const FunctionData &other_p) const {
 	return ecc == other.ecc && on == other.on && off == other.off && binary == other.binary;
 }
 
-unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &bound_function,
-                                        vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> TextplotQRBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &arguments = input.GetArguments();
+	// Named arguments (e.g. width := 20) are reported through the argument names.
+	const auto argument_names = input.GetArgumentNames();
 	if (arguments.empty()) {
 		throw BinderException("tp_qr takes at least one argument");
 	}
 
-	if (arguments[0]->return_type.id() == LogicalTypeId::UNKNOWN) {
+	if (arguments[0]->GetReturnType().id() == LogicalTypeId::UNKNOWN) {
 		throw ParameterNotResolvedException();
 	}
-	const auto binary = arguments[0]->return_type == LogicalType::BLOB;
-	if (!binary && arguments[0]->return_type != LogicalType::VARCHAR) {
+	const auto binary = arguments[0]->GetReturnType() == LogicalType::BLOB;
+	if (!binary && arguments[0]->GetReturnType() != LogicalType::VARCHAR) {
 		throw InvalidTypeException("tp_qr first argument must be a VARCHAR or BLOB");
 	}
 
@@ -64,20 +67,20 @@ unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &
 		if (!arg->IsFoldable()) {
 			throw BinderException("tp_qr: arguments must be constant");
 		}
-		const auto &alias = arg->GetAlias();
+		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
 		if (alias == "ecc") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_qr: 'ecc' argument must be a VARCHAR");
 			}
 			ecc = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 		} else if (alias == "on") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_qr: 'on' argument must be a VARCHAR");
 			}
 			on = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 			TextplotValidateCellString("tp_qr", "on", on);
 		} else if (alias == "off") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_qr: 'off' argument must be a VARCHAR");
 			}
 			off = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
@@ -106,9 +109,9 @@ unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &
 void TextplotQR(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &value_vector = args.data[0];
 	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto &bind_data = func_expr.bind_info->Cast<TextplotQRBindData>();
+	const auto &bind_data = func_expr.BindInfo()->Cast<TextplotQRBindData>();
 
-	UnaryExecutor::Execute<string_t, string_t>(value_vector, result, args.size(), [&](string_t value) {
+	UnaryExecutor::Execute<string_t, string_t>(value_vector, result, [&](string_t value) {
 		// std::vector<qrcodegen::QrSegment> segs = qrcodegen::QrSegment::makeSegments(value.GetData());
 
 		// auto qr = qrcodegen::QrCode::encodeSegments(segs, qrcodegen::QrCode::Ecc::LOW, bind_data.min_version,

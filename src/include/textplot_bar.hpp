@@ -9,8 +9,7 @@
 namespace duckdb {
 
 // Function declarations
-unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction &bound_function,
-                                         vector<unique_ptr<Expression>> &arguments);
+unique_ptr<FunctionData> TextplotBarBind(BindScalarFunctionInput &input);
 
 void TextplotBar(DataChunk &args, ExpressionState &state, Vector &result);
 

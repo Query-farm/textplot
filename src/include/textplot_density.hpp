@@ -9,8 +9,7 @@
 namespace duckdb {
 
 // Function declarations
-unique_ptr<FunctionData> TextplotDensityBind(ClientContext &context, ScalarFunction &bound_function,
-                                             vector<unique_ptr<Expression>> &arguments);
+unique_ptr<FunctionData> TextplotDensityBind(BindScalarFunctionInput &input);
 
 void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result);
 

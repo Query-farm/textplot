@@ -14,7 +14,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// tp_bar: Horizontal bar charts with thresholds and colors
 	{
 		auto bar_function = ScalarFunction("tp_bar", {LogicalType::DOUBLE}, LogicalType::VARCHAR, TextplotBar,
-		                                   TextplotBarBind, nullptr, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
+		                                   TextplotBarBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
 		CreateScalarFunctionInfo info(std::move(bar_function));
 
 		FunctionDescription desc;
@@ -40,9 +40,10 @@ static void LoadInternal(ExtensionLoader &loader) {
 		ScalarFunctionSet qr_functions("tp_qr");
 		for (const auto &input_type : {LogicalType::VARCHAR, LogicalType::BLOB}) {
 			qr_functions.AddFunction(ScalarFunction("tp_qr", {input_type}, LogicalType::VARCHAR, TextplotQR,
-			                                        TextplotQRBind, nullptr, nullptr, nullptr,
-			                                        LogicalType(LogicalTypeId::ANY)));
+			                                        TextplotQRBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY)));
 		}
+		// QR encoding raises an error when the payload is too long for any QR code version.
+		qr_functions.SetFallible();
 		CreateScalarFunctionInfo info(std::move(qr_functions));
 
 		// duckdb_functions() matches a description to an overload on parameter_types, so a set
@@ -66,8 +67,10 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// tp_density: Density plots/histograms from arrays
 	{
 		auto density_function =
-		    ScalarFunction("tp_density", {LogicalType::LIST(LogicalType::DOUBLE)}, LogicalType::VARCHAR, TextplotDensity,
-		                   TextplotDensityBind, nullptr, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
+		    ScalarFunction("tp_density", {LogicalType::LIST(LogicalType::DOUBLE)}, LogicalType::VARCHAR,
+		                   TextplotDensity, TextplotDensityBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
+		// Casting the input list to LIST(DOUBLE) at execution time can raise an error.
+		density_function.SetFallible();
 		CreateScalarFunctionInfo info(std::move(density_function));
 
 		FunctionDescription desc;
@@ -91,9 +94,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// tp_sparkline: Compact trend lines with multiple modes
 	{
-		auto sparkline_function = ScalarFunction("tp_sparkline", {LogicalType::LIST(LogicalType::DOUBLE)},
-		                                         LogicalType::VARCHAR, TextplotSparkline, TextplotSparklineBind, nullptr,
-		                                         nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
+		auto sparkline_function =
+		    ScalarFunction("tp_sparkline", {LogicalType::LIST(LogicalType::DOUBLE)}, LogicalType::VARCHAR,
+		                   TextplotSparkline, TextplotSparklineBind, nullptr, nullptr, LogicalType(LogicalTypeId::ANY));
+		// Casting the input list to LIST(DOUBLE) at execution time can raise an error.
+		sparkline_function.SetFallible();
 		CreateScalarFunctionInfo info(std::move(sparkline_function));
 
 		FunctionDescription desc;

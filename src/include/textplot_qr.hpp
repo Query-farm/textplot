@@ -9,8 +9,7 @@
 namespace duckdb {
 
 // Function declarations
-unique_ptr<FunctionData> TextplotQRBind(ClientContext &context, ScalarFunction &bound_function,
-                                        vector<unique_ptr<Expression>> &arguments);
+unique_ptr<FunctionData> TextplotQRBind(BindScalarFunctionInput &input);
 
 void TextplotQR(DataChunk &args, ExpressionState &state, Vector &result);
 

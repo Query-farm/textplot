@@ -291,13 +291,16 @@ bool TextplotSparklineBindData::Equals(const FunctionData &other_p) const {
 	return mode == other.mode && theme == other.theme && width == other.width;
 }
 
-unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFunction &bound_function,
-                                               vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> TextplotSparklineBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &arguments = input.GetArguments();
+	// Named arguments (e.g. width := 20) are reported through the argument names.
+	const auto argument_names = input.GetArgumentNames();
 	if (arguments.empty()) {
 		throw BinderException("tp_sparkline takes at least one argument");
 	}
 
-	if (!TextplotIsNumericList(arguments[0]->return_type)) {
+	if (!TextplotIsNumericList(arguments[0]->GetReturnType())) {
 		throw InvalidTypeException("tp_sparkline first argument must be a list of numeric values");
 	}
 
@@ -314,20 +317,20 @@ unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFun
 		if (!arg->IsFoldable()) {
 			throw BinderException("tp_sparkline: arguments must be constant");
 		}
-		const auto &alias = arg->GetAlias();
+		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
 		if (alias == "width") {
-			if (!arg->return_type.IsIntegral()) {
+			if (!arg->GetReturnType().IsIntegral()) {
 				throw BinderException("tp_sparkline: 'width' argument must be an integer");
 			}
 			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			width = eval_result.CastAs(context, LogicalType::UBIGINT).GetValue<uint64_t>();
 		} else if (alias == "theme") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_sparkline: 'theme' argument must be a VARCHAR");
 			}
 			theme = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 		} else if (alias == "mode") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_sparkline: 'mode' argument must be a VARCHAR");
 			}
 			specified_mode = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
@@ -373,12 +376,12 @@ unique_ptr<FunctionData> TextplotSparklineBind(ClientContext &context, ScalarFun
 
 void TextplotSparkline(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto &bind_data = func_expr.bind_info->Cast<TextplotSparklineBindData>();
+	const auto &bind_data = func_expr.BindInfo()->Cast<TextplotSparklineBindData>();
 
 	TextplotListReader reader(state.GetContext(), args.data[0], args.size());
 
 	std::vector<double> data_items;
-	UnaryExecutor::Execute<list_entry_t, string_t>(reader.GetVector(), result, args.size(), [&](list_entry_t values) {
+	UnaryExecutor::Execute<list_entry_t, string_t>(reader.GetVector(), result, [&](list_entry_t values) {
 		reader.Extract(values, data_items);
 
 		// An empty list, or one holding only NULL/NaN/Inf, has nothing to plot.

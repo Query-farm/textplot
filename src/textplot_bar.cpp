@@ -5,6 +5,7 @@
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/common/optional.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -120,13 +121,16 @@ bool TextplotBarBindData::Equals(const FunctionData &other_p) const {
 	       on_color == other.on_color && off_color == other.off_color;
 }
 
-unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction &bound_function,
-                                         vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> TextplotBarBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &arguments = input.GetArguments();
+	// Named arguments (e.g. width := 20) are reported through the argument names.
+	const auto argument_names = input.GetArgumentNames();
 	if (arguments.empty()) {
 		throw BinderException("tp_bar takes at least one argument");
 	}
 
-	if (!arguments[0]->return_type.IsNumeric()) {
+	if (!arguments[0]->GetReturnType().IsNumeric()) {
 		throw InvalidTypeException("tp_bar first argument must be numeric");
 	}
 
@@ -150,23 +154,24 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 		if (!arg->IsFoldable()) {
 			throw BinderException("tp_bar: arguments must be constant");
 		}
-		const auto &alias = arg->GetAlias();
+		const auto alias = argument_names ? (*argument_names)[i] : arg->GetAlias();
 		if (alias == "min") {
-			if (!arg->return_type.IsNumeric()) {
+			if (!arg->GetReturnType().IsNumeric()) {
 				throw BinderException("tp_bar: 'min' argument must be numeric");
 			}
 			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			min = eval_result.CastAs(context, LogicalType::DOUBLE).GetValue<double>();
 		} else if (alias == "max") {
-			if (!arg->return_type.IsNumeric()) {
+			if (!arg->GetReturnType().IsNumeric()) {
 				throw BinderException("tp_bar: 'max' argument must be numeric");
 			}
 			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			max = eval_result.CastAs(context, LogicalType::DOUBLE).GetValue<double>();
 		} else if (alias == "thresholds") {
-			if (arg->return_type.InternalType() != PhysicalType::LIST) {
-				throw BinderException(StringUtil::Format(
-				    "tp_bar: 'thresholds' argument must be a list of structs it is %s", arg->return_type.ToString()));
+			if (arg->GetReturnType().InternalType() != PhysicalType::LIST) {
+				throw BinderException(
+				    StringUtil::Format("tp_bar: 'thresholds' argument must be a list of structs it is %s",
+				                       arg->GetReturnType().ToString()));
 			}
 
 			const auto thresholds_value = ExpressionExecutor::EvaluateScalar(context, *arg);
@@ -209,7 +214,7 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 				return a.first > b.first; // descending by .first
 			});
 		} else if (alias == "width") {
-			if (!arg->return_type.IsIntegral()) {
+			if (!arg->GetReturnType().IsIntegral()) {
 				throw BinderException("tp_bar: 'width' argument must be an integer");
 			}
 			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
@@ -218,29 +223,29 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 			const auto eval_result = ExpressionExecutor::EvaluateScalar(context, *arg);
 			filled = eval_result.CastAs(context, LogicalType::BOOLEAN).GetValue<bool>();
 		} else if (alias == "on") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_bar: 'on' argument must be a VARCHAR");
 			}
 			on = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 			TextplotValidateCellString("tp_bar", "on", on);
 		} else if (alias == "off") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_bar: 'off' argument must be a VARCHAR");
 			}
 			off = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 			TextplotValidateCellString("tp_bar", "off", off);
 		} else if (alias == "off_color") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_bar: 'off_color' argument must be a VARCHAR");
 			}
 			off_color = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 		} else if (alias == "on_color") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_bar: 'on_color' argument must be a VARCHAR");
 			}
 			on_color = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
 		} else if (alias == "shape") {
-			if (arg->return_type.id() != LogicalTypeId::VARCHAR) {
+			if (arg->GetReturnType().id() != LogicalTypeId::VARCHAR) {
 				throw BinderException("tp_bar: 'shape' argument must be a VARCHAR");
 			}
 			shape = StringValue::Get(ExpressionExecutor::EvaluateScalar(context, *arg));
@@ -279,41 +284,38 @@ unique_ptr<FunctionData> TextplotBarBind(ClientContext &context, ScalarFunction 
 void TextplotBar(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &value_vector = args.data[0];
 	const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto &bind_data = func_expr.bind_info->Cast<TextplotBarBindData>();
+	const auto &bind_data = func_expr.BindInfo()->Cast<TextplotBarBindData>();
 
-	UnaryExecutor::ExecuteWithNulls<double, string_t>(
-	    value_vector, result, args.size(), [&](double value, ValidityMask &mask, idx_t row_idx) {
-		    if (std::isnan(value)) {
-			    // NaN has no position on the bar, and rounding it to an integer block count is
-			    // undefined behaviour; report it as NULL instead.
-			    mask.SetInvalid(row_idx);
-			    return string_t();
-		    }
+	UnaryExecutor::Execute<double, string_t>(value_vector, result, [&](double value) -> optional<string_t> {
+		if (std::isnan(value)) {
+			// NaN has no position on the bar, and rounding it to an integer block count is
+			// undefined behaviour; report it as NULL instead.
+			return nullopt;
+		}
 
-		    double proportion;
-		    if (bind_data.max == bind_data.min) {
-			    // Avoid division by zero: if value equals min/max, show full bar; otherwise empty
-			    proportion = (value >= bind_data.min) ? 1.0 : 0.0;
-		    } else {
-			    proportion = std::clamp((value - bind_data.min) / (bind_data.max - bind_data.min), 0.0, 1.0);
-		    }
-		    // proportion is in [0, 1] and width is capped at bind time, so this cannot overflow.
-		    const auto filled_blocks =
-		        static_cast<int64_t>(std::round(static_cast<double>(bind_data.width) * proportion));
+		double proportion;
+		if (bind_data.max == bind_data.min) {
+			// Avoid division by zero: if value equals min/max, show full bar; otherwise empty
+			proportion = (value >= bind_data.min) ? 1.0 : 0.0;
+		} else {
+			proportion = std::clamp((value - bind_data.min) / (bind_data.max - bind_data.min), 0.0, 1.0);
+		}
+		// proportion is in [0, 1] and width is capped at bind time, so this cannot overflow.
+		const auto filled_blocks = static_cast<int64_t>(std::round(static_cast<double>(bind_data.width) * proportion));
 
-		    string bar;
-		    bar.reserve(static_cast<size_t>(bind_data.width) * 4); // Reserve space for potential multi-byte characters
-		    for (int64_t i = 0; i < bind_data.width; i++) {
-			    if (bind_data.filled) {
-				    // Fill all blocks up to the proportion
-				    bar += bind_data.get_character(value, i < filled_blocks);
-			    } else {
-				    // Only fill the transition point
-				    bar += bind_data.get_character(value, filled_blocks > 0 && i == filled_blocks - 1);
-			    }
-		    }
-		    return StringVector::AddString(result, bar);
-	    });
+		string bar;
+		bar.reserve(static_cast<size_t>(bind_data.width) * 4); // Reserve space for potential multi-byte characters
+		for (int64_t i = 0; i < bind_data.width; i++) {
+			if (bind_data.filled) {
+				// Fill all blocks up to the proportion
+				bar += bind_data.get_character(value, i < filled_blocks);
+			} else {
+				// Only fill the transition point
+				bar += bind_data.get_character(value, filled_blocks > 0 && i == filled_blocks - 1);
+			}
+		}
+		return StringVector::AddString(result, bar);
+	});
 }
 
 } // namespace duckdb
