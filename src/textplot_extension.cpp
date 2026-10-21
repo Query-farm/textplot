@@ -1,124 +1,172 @@
+#define DUCKDB_EXTENSION_MAIN
+
 #include "textplot_extension.hpp"
-#include "textplot_bar.hpp"
-#include "textplot_density.hpp"
-#include "textplot_sparkline.hpp"
-#include "textplot_qr.hpp"
-#include "duckdb.hpp"
-#include "duckdb/function/scalar_function.hpp"
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#include "query_farm_telemetry.hpp"
+#include "duckdb/common/error_data.hpp"
+#include "duckdb/common/exception.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/main/extension_helper.hpp"
+#include "duckdb/main/extension_load_options.hpp"
+#include "duckdb/main/extension_repository_manager.hpp"
+
+// For DuckDB 2.0 and later this extension is distributed from the Query.Farm extension repository. The build published to the
+// DuckDB community repository only keeps the name. When the user has already added the Query.Farm repository and
+// installed the extension from it, loading this build loads that one; otherwise it explains the remaining steps.
+// It never adds the repository or installs anything itself: trusting a repository is the user's decision.
 
 namespace duckdb {
 
-static void LoadInternal(ExtensionLoader &loader) {
-	// Each function declares its options as keyword-only parameters with defaults, so DuckDB matches
-	// the names, casts the values and fills in defaults; duckdb_functions() reports the parameter
-	// names and types straight from those signatures.
+static constexpr const char *EXTENSION_NAME = "textplot";
+static constexpr const char *EXTENSION_VERSION = "2026102001";
+static constexpr const char *REPOSITORY_NAME = "query_farm";
+static constexpr const char *REPOSITORY_URL = "https://duckdb-extensions.query.farm";
+static constexpr const char *REPOSITORY_HTTP_URL = "http://duckdb-extensions.query.farm";
+// sha256 fingerprints of the Query.Farm repository signing keys (primary and standby)
+static constexpr const char *REPOSITORY_KEY_FINGERPRINTS[] = {
+    "sha256:b293ba6145db8f51f301618f59a720cb8c0c21e7efc6119aab43ea5c708947b5",
+    "sha256:6959de1c16b783b14d4c904f69361811f737017d79ea7078729a74ec2f7f7753"};
 
-	// tp_bar: Horizontal bar charts with thresholds and colors
-	{
-		CreateScalarFunctionInfo info(TextplotBarFunction());
+static string MovedPreamble() {
+	return StringUtil::Format("The %s extension for DuckDB 2.0 and later is distributed from the Query.Farm extension repository, "
+	                          "not the DuckDB community repository.\n\n",
+	                          EXTENSION_NAME);
+}
 
-		FunctionDescription desc;
-		desc.description = "Creates a horizontal bar chart visualization from a numeric value. "
-		                   "Supports customizable width, colors, shapes (square/circle/heart), and color thresholds.";
-		desc.examples = {"tp_bar(0.75)",
-		                 "tp_bar(75, min := 0, max := 100, width := 20)",
-		                 "tp_bar(0.5, \"on\" := '#', off := '-', width := 10)",
-		                 "tp_bar(0.8, shape := 'heart', on_color := 'red')",
-		                 "tp_bar(75, min := 0, max := 100, thresholds := "
-		                 "[{'threshold': 80, 'color': 'red'}, "
-		                 "{'threshold': 50, 'color': 'yellow'}])"};
-		info.descriptions.push_back(std::move(desc));
+static string MoreInformation() {
+	return StringUtil::Format("\n\nMore information: https://query.farm/products/extensions/%s/", EXTENSION_NAME);
+}
 
-		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
-		loader.RegisterFunction(std::move(info));
-	}
-
-	// tp_qr: QR code generation
-	{
-		CreateScalarFunctionInfo info(TextplotQRFunctions());
-
-		// duckdb_functions() matches a description to an overload on parameter_types, so a set
-		// needs one fully-typed description per overload.
-		for (const auto &input_type : {LogicalType::VARCHAR, LogicalType::BLOB}) {
-			FunctionDescription desc;
-			desc.description = "Generates a text-based QR code from a string or blob. "
-			                   "Supports configurable error correction levels and custom on/off characters.";
-			desc.parameter_types = {input_type, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR};
-			desc.examples = {"tp_qr('https://duckdb.org')", "tp_qr('https://example.com', ecc := 'high')",
-			                 "tp_qr('Hello, world!', \"on\" := '##', off := '  ')",
-			                 "tp_qr('\\xDE\\xAD\\xBE\\xEF'::BLOB)"};
-			info.descriptions.push_back(std::move(desc));
+static bool IsInstalledFromRepository(DatabaseInstance &db, FileSystem &fs) {
+	for (auto &directory : ExtensionHelper::GetExtensionDirectoryPath(db, fs)) {
+		auto path = fs.JoinPath(fs.JoinPath(fs.JoinPath(directory, "repositories"), REPOSITORY_NAME),
+		                        string(EXTENSION_NAME) + ".duckdb_extension");
+		if (fs.FileExists(path)) {
+			return true;
 		}
+	}
+	return false;
+}
 
-		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
-		loader.RegisterFunction(std::move(info));
+// A repository named query_farm is only used when it points at the Query.Farm prefix and pins a Query.Farm signing key.
+static bool IsQueryFarmRepository(const ExtensionRepository &repository) {
+	auto prefix = StringUtil::Lower(repository.path);
+	while (StringUtil::EndsWith(prefix, "/")) {
+		prefix.pop_back();
+	}
+	if (prefix != REPOSITORY_URL && prefix != REPOSITORY_HTTP_URL) {
+		return false;
+	}
+	for (auto &key : repository.public_keys) {
+		auto fingerprint = ExtensionRepositoryManager::GetPublicKeyFingerprint(key);
+		for (auto trusted : REPOSITORY_KEY_FINGERPRINTS) {
+			if (fingerprint == trusted) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static void LoadFromQueryFarmOrExplain(DatabaseInstance &db) {
+	auto &fs = FileSystem::GetFileSystem(db);
+	ExtensionRepository repository;
+	bool has_repository = ExtensionRepositoryManager::TryGetRepository(db, fs, REPOSITORY_NAME, repository);
+
+	if (!has_repository) {
+		throw MissingExtensionException(
+		    "%sAdd the repository and install the extension once:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    CREATE EXTENSION REPOSITORY IF NOT EXISTS %s WITH PREFIX '%s';\n"
+		    "    INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Then load it in each session with:\n"
+		    "\n"
+		    "    LOAD %s FROM %s;%s",
+		    MovedPreamble(), REPOSITORY_NAME, REPOSITORY_URL, EXTENSION_NAME, REPOSITORY_NAME, EXTENSION_NAME,
+		    REPOSITORY_NAME, MoreInformation());
+	}
+	if (!IsQueryFarmRepository(repository)) {
+		throw MissingExtensionException(
+		    "%sA repository named %s is configured with the prefix '%s', but it is not the Query.Farm extension "
+		    "repository: it points somewhere else or does not use the Query.Farm signing keys, so the extension is not "
+		    "loaded from it. Replace it with the Query.Farm repository and reinstall the extension:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    CREATE OR REPLACE EXTENSION REPOSITORY %s WITH PREFIX '%s';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Then load it in each session with:\n"
+		    "\n"
+		    "    LOAD %s FROM %s;%s",
+		    MovedPreamble(), REPOSITORY_NAME, repository.path, REPOSITORY_NAME, REPOSITORY_URL, EXTENSION_NAME,
+		    REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
+	}
+	if (ExtensionRepositoryManager::GetAccess(db) == ExtensionRepositoryAccess::FORBIDDEN) {
+		throw MissingExtensionException("%sThe %s repository is configured, but allow_extension_repositories is set to "
+		                                "'forbidden', so extensions from it cannot be loaded.%s",
+		                                MovedPreamble(), REPOSITORY_NAME, MoreInformation());
+	}
+	if (!IsInstalledFromRepository(db, fs)) {
+		throw MissingExtensionException("%sThe %s repository is already configured. Install the extension from it once:\n"
+		                                "\n"
+		                                "    SET allow_extension_repositories = 'allowed';\n"
+		                                "    INSTALL %s FROM %s;\n"
+		                                "\n"
+		                                "Then load it in each session with:\n"
+		                                "\n"
+		                                "    LOAD %s FROM %s;%s",
+		                                MovedPreamble(), REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME,
+		                                EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
 	}
 
-	// tp_density: Density plots/histograms from arrays
-	{
-		CreateScalarFunctionInfo info(TextplotDensityFunction());
-
-		FunctionDescription desc;
-		desc.description = "Creates a density plot (histogram) visualization from an array of numeric values. "
-		                   "Supports multiple styles: shaded, dots, ascii, height, circles, safety, rainbow_circle, "
-		                   "rainbow_square, moon, sparse, and white. Pass 'marker_value' to highlight the bin "
-		                   "containing a particular value, optionally with a custom 'marker' character.";
-		desc.examples = {"tp_density([1.0, 2.0, 2.0, 3.0, 3.0, 3.0, 4.0, 4.0, 5.0])",
-		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], width := 40)",
-		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], style := 'height')",
-		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], marker_value := 3.0)",
-		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], marker := '|', marker_value := 4.0)",
-		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], "
-		                 "style := 'rainbow_square', width := 30)"};
-		info.descriptions.push_back(std::move(desc));
-
-		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
-		loader.RegisterFunction(std::move(info));
+	// The repository is trusted and the extension is installed from it: load that build. DuckDB holds the load lock
+	// for this name while this stub initializes, so the real extension is loaded under an alias; its functions are
+	// registered as usual.
+	ExtensionLoadOptions options(EXTENSION_NAME);
+	options.repository = REPOSITORY_NAME;
+	options.alias = Identifier(string(EXTENSION_NAME) + "_" + REPOSITORY_NAME);
+	try {
+		ExtensionHelper::LoadExternalExtension(db, fs, options);
+	} catch (std::exception &ex) {
+		ErrorData error(ex);
+		if (error.Type() != ExceptionType::IO || !StringUtil::Contains(error.RawMessage(), "signature")) {
+			throw;
+		}
+		throw MissingExtensionException(
+		    "%sThe %s extension installed from the %s repository failed signature verification. The file may be "
+		    "damaged, or it was signed with a key that this repository definition does not trust. Reinstall it:\n"
+		    "\n"
+		    "    SET allow_extension_repositories = 'allowed';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "If loading still fails the same way, refresh the repository's signing keys and reinstall:\n"
+		    "\n"
+		    "    CREATE OR REPLACE EXTENSION REPOSITORY %s WITH PREFIX '%s';\n"
+		    "    FORCE INSTALL %s FROM %s;\n"
+		    "\n"
+		    "Do not use -unsigned to work around this.%s",
+		    MovedPreamble(), EXTENSION_NAME, REPOSITORY_NAME, EXTENSION_NAME, REPOSITORY_NAME, REPOSITORY_NAME,
+		    REPOSITORY_URL, EXTENSION_NAME, REPOSITORY_NAME, MoreInformation());
 	}
-
-	// tp_sparkline: Compact trend lines with multiple modes
-	{
-		CreateScalarFunctionInfo info(TextplotSparklineFunction());
-
-		FunctionDescription desc;
-		desc.description = "Creates a sparkline visualization from an array of numeric values. "
-		                   "Supports three modes: 'absolute' (height-based), 'delta' (up/down/same direction), "
-		                   "and 'trend' (direction with magnitude). Multiple themes available per mode.";
-		desc.examples = {"tp_sparkline([1.0, 2.0, 3.0, 4.0, 5.0])",
-		                 "tp_sparkline([1.0, 3.0, 2.0, 5.0, 4.0, 6.0], width := 20)",
-		                 "tp_sparkline([1.0, 2.0, 1.0, 3.0, 2.0], "
-		                 "mode := 'delta', theme := 'arrows')",
-		                 "tp_sparkline([1.0, 2.0, 3.0, 4.0, 5.0], "
-		                 "mode := 'absolute', theme := 'utf8_blocks')",
-		                 "tp_sparkline([1.0, 5.0, 3.0, 8.0, 6.0], "
-		                 "mode := 'trend', theme := 'faces')"};
-		info.descriptions.push_back(std::move(desc));
-
-		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
-		loader.RegisterFunction(std::move(info));
-	}
-
-	QueryFarmSendTelemetry(loader, "textplot", TextplotExtension().Version());
 }
 
 void TextplotExtension::Load(ExtensionLoader &loader) {
-	LoadInternal(loader);
+	LoadFromQueryFarmOrExplain(loader.GetDatabaseInstance());
 }
 
 std::string TextplotExtension::Name() {
-	return "textplot";
+	return EXTENSION_NAME;
 }
 
 std::string TextplotExtension::Version() const {
-	return "2026102002";
+	return EXTENSION_VERSION;
 }
 
 } // namespace duckdb
 
 extern "C" {
+
 DUCKDB_CPP_EXTENSION_ENTRY(textplot, loader) {
-	duckdb::LoadInternal(loader);
+	duckdb::LoadFromQueryFarmOrExplain(loader.GetDatabaseInstance());
 }
 }
