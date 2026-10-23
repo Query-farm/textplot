@@ -7,22 +7,15 @@
   </a>
 </p>
 
-# DuckDB Textplot Extension by [Query.Farm](https://query.farm)
+# Textplot Extension for DuckDB
 
-[![DuckDB](https://img.shields.io/badge/DuckDB-community_extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://duckdb.org/community_extensions/extensions/textplot.html)
-[![v1.5 build](https://github.com/Query-farm/textplot/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v1.5)](https://github.com/Query-farm/textplot/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av1.5)
+[![DuckDB](https://img.shields.io/badge/DuckDB-extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://query.farm/products/extensions/textplot/)
+[![v2.0 build](https://github.com/Query-farm/textplot/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v2.0)](https://github.com/Query-farm/textplot/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av2.0)
 
-The **Textplot** extension, developed by **[Query.Farm](https://query.farm)**, brings beautiful text-based data visualization directly to your SQL queries in DuckDB. Create stunning ASCII/Unicode charts, bar graphs, and density plots without leaving your database environment.
+Render ASCII and Unicode plots directly in DuckDB query results.
 
 ## Documentation
 
 Full documentation, including installation, usage, the function reference, and cookbook examples, is available at:
 
-**[https://query.farm/products/extensions/textplot](https://query.farm/products/extensions/textplot)**
-
-## Installation
-
-```sql
-install textplot from community;
-load textplot;
-```
+**[https://query.farm/products/extensions/textplot/](https://query.farm/products/extensions/textplot/)**
