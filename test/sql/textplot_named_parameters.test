@@ -30,6 +30,7 @@ tp_bar	1
 tp_density	1
 tp_qr	2
 tp_sparkline	1
+tp_sparkline_agg	1
 
 # ------------------------------------------------------------------
 # Omitted options take their defaults

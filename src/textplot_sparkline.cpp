@@ -4,6 +4,8 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/function/aggregate_function.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 #include <algorithm>
 
 namespace duckdb {
@@ -298,12 +300,9 @@ bool TextplotSparklineBindData::Equals(const FunctionData &other_p) const {
 	return mode == other.mode && theme == other.theme && width == other.width;
 }
 
-unique_ptr<FunctionData> TextplotSparklineBind(BindScalarFunctionInput &input) {
-	auto &arguments = input.GetArguments();
-	if (!TextplotIsNumericList(arguments[0]->GetReturnType())) {
-		throw InvalidTypeException("tp_sparkline first argument must be a list of numeric values");
-	}
-
+//! Reads the keyword-only options shared by tp_sparkline and tp_sparkline_agg.
+static unique_ptr<TextplotSparklineBindData> TextplotSparklineBindOptions(const string &function_name,
+                                                                          BindFunctionInput &input) {
 	// The options are keyword-only parameters of the signature (see TextplotSparklineFunction): DuckDB
 	// has already matched the names, cast the values to the declared types and filled in the defaults.
 	// An explicit NULL option makes the whole call NULL before bind is reached (default NULL handling).
@@ -319,8 +318,8 @@ unique_ptr<FunctionData> TextplotSparklineBind(BindScalarFunctionInput &input) {
 	} else if (specified_mode == "absolute") {
 		mode = SparklineMode::ABSOLUTE;
 	} else {
-		throw BinderException(StringUtil::Format(
-		    "tp_sparkline: Unknown type '%s' must be one of <delta, trend, absolute>", specified_mode));
+		throw BinderException(StringUtil::Format("%s: Unknown type '%s' must be one of <delta, trend, absolute>",
+		                                         function_name, specified_mode));
 	}
 
 	auto available_themes = EnhancedSparklineThemes::getAvailableThemes(mode);
@@ -337,13 +336,22 @@ unique_ptr<FunctionData> TextplotSparklineBind(BindScalarFunctionInput &input) {
 		}
 	}
 	if (std::find(available_themes.begin(), available_themes.end(), theme) == available_themes.end()) {
-		throw BinderException(StringUtil::Format("tp_sparkline: Unknown theme '%s' for mode '%s', available are <%s>",
-		                                         theme, specified_mode, StringUtil::Join(available_themes, ", ")));
+		throw BinderException(StringUtil::Format("%s: Unknown theme '%s' for mode '%s', available are <%s>",
+		                                         function_name, theme, specified_mode,
+		                                         StringUtil::Join(available_themes, ", ")));
 	}
 
-	TextplotValidateWidth("tp_sparkline", width);
+	TextplotValidateWidth(function_name, width);
 
 	return make_uniq<TextplotSparklineBindData>(mode, theme, width);
+}
+
+unique_ptr<FunctionData> TextplotSparklineBind(BindScalarFunctionInput &input) {
+	auto &arguments = input.GetArguments();
+	if (!TextplotIsNumericList(arguments[0]->GetReturnType())) {
+		throw InvalidTypeException("tp_sparkline first argument must be a list of numeric values");
+	}
+	return TextplotSparklineBindOptions("tp_sparkline", input);
 }
 
 void TextplotSparkline(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -378,6 +386,110 @@ ScalarFunction TextplotSparklineFunction() {
 	    .AddKeywordOnly("theme", LogicalType::VARCHAR, Value(""));
 	// Casting the input list to LIST(DOUBLE) at execution time can raise an error.
 	function.SetFallible();
+	return function;
+}
+
+// ---------------------------------------------------------------------------------------------
+// tp_sparkline_agg: the aggregate form of tp_sparkline
+// ---------------------------------------------------------------------------------------------
+
+//! The values of one group, in arrival order. The buffer lives in the aggregate's arena allocator,
+//! so the state is trivially movable and needs no destructor.
+struct TextplotSparklineAggState {
+	double *values;
+	idx_t count;
+	idx_t capacity;
+	//! True once a non-NULL input has been seen (NaN/Inf count as seen but are not stored).
+	bool is_set;
+};
+
+struct TextplotSparklineAggOperation {
+	static bool IgnoreNull() {
+		return true;
+	}
+
+	static void Append(TextplotSparklineAggState &state, ArenaAllocator &allocator, const double *values, idx_t count) {
+		if (count == 0) {
+			return;
+		}
+		if (state.count + count > state.capacity) {
+			const auto old_bytes = state.capacity * sizeof(double);
+			auto new_capacity = MaxValue<idx_t>(state.capacity * 2, 64);
+			while (new_capacity < state.count + count) {
+				new_capacity *= 2;
+			}
+			if (state.values) {
+				state.values = reinterpret_cast<double *>(
+				    allocator.Reallocate(data_ptr_cast(state.values), old_bytes, new_capacity * sizeof(double)));
+			} else {
+				state.values = reinterpret_cast<double *>(allocator.Allocate(new_capacity * sizeof(double)));
+			}
+			state.capacity = new_capacity;
+		}
+		memcpy(state.values + state.count, values, count * sizeof(double));
+		state.count += count;
+	}
+
+	template <class INPUT_TYPE, class STATE, class OP>
+	static void Operation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &unary_input) {
+		state.is_set = true;
+		const auto value = static_cast<double>(input);
+		// NaN and +/-Inf cannot be plotted; drop them the same way tp_sparkline does.
+		if (!Value::DoubleIsFinite(value)) {
+			return;
+		}
+		Append(state, unary_input.input.allocator, &value, 1);
+	}
+
+	template <class INPUT_TYPE, class STATE, class OP>
+	static void ConstantOperation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &unary_input,
+	                              idx_t count) {
+		for (idx_t i = 0; i < count; i++) {
+			Operation<INPUT_TYPE, STATE, OP>(state, input, unary_input);
+		}
+	}
+
+	template <class STATE, class OP>
+	static void Combine(const STATE &source, STATE &target, AggregateInputData &aggr_input_data) {
+		target.is_set = target.is_set || source.is_set;
+		Append(target, aggr_input_data.allocator, source.values, source.count);
+	}
+
+	template <class T, class STATE>
+	static void Finalize(STATE &state, T &target, AggregateFinalizeData &finalize_data) {
+		if (!state.is_set) {
+			// No non-NULL input in the group: NULL, like most aggregates.
+			finalize_data.ReturnNull();
+			return;
+		}
+		const auto &bind_data = finalize_data.input.bind_data->template Cast<TextplotSparklineBindData>();
+		string rendered;
+		if (state.count > 0) {
+			std::vector<double> data(state.values, state.values + state.count);
+			rendered = generateSparkline(data, bind_data.width, bind_data.theme, bind_data.mode);
+		}
+		target = StringVector::AddString(finalize_data.result, rendered);
+	}
+};
+
+static unique_ptr<FunctionData> TextplotSparklineAggBind(BindAggregateFunctionInput &input) {
+	return TextplotSparklineBindOptions("tp_sparkline_agg", input);
+}
+
+AggregateFunction TextplotSparklineAggFunction() {
+	using STATE = TextplotSparklineAggState;
+	using OP = TextplotSparklineAggOperation;
+	AggregateFunction function(
+	    "tp_sparkline_agg", vector<LogicalType> {}, LogicalType::VARCHAR, AggregateFunction::StateSize<STATE>,
+	    AggregateFunction::StateInitialize<STATE, OP>, AggregateFunction::UnaryScatterUpdate<STATE, double, OP>,
+	    AggregateFunction::StateCombine<STATE, OP>, AggregateFunction::StateFinalize<STATE, string_t, OP>,
+	    FunctionNullHandling::DEFAULT_NULL_HANDLING, AggregateFunction::NoClusterUpdate(), TextplotSparklineAggBind);
+	// tp_sparkline_agg(value, *, width, mode, theme) - same options as tp_sparkline
+	function.GetSignature()
+	    .AddPositionalOnly("value", LogicalType::DOUBLE)
+	    .AddKeywordOnly("width", LogicalType::BIGINT, Value::BIGINT(20))
+	    .AddKeywordOnly("mode", LogicalType::VARCHAR, Value("absolute"))
+	    .AddKeywordOnly("theme", LogicalType::VARCHAR, Value(""));
 	return function;
 }
 

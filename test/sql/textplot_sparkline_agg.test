@@ -1,0 +1,156 @@
+# name: test/sql/textplot_sparkline_agg.test
+# description: tp_sparkline_agg, the aggregate form of tp_sparkline
+# group: [sql]
+
+require textplot
+
+statement ok
+CREATE TABLE series AS
+SELECT t % 3 AS g, t, ((t * 7) % 11)::DOUBLE AS v FROM range(60) r(t);
+
+# Same result as tp_sparkline over list(... ORDER BY ...), for every mode and option.
+query I
+SELECT count(*) FROM (
+  SELECT g,
+         tp_sparkline_agg(v ORDER BY t) AS a1, tp_sparkline(list(v ORDER BY t)) AS b1,
+         tp_sparkline_agg(v, width := 7 ORDER BY t) AS a2, tp_sparkline(list(v ORDER BY t), width := 7) AS b2,
+         tp_sparkline_agg(v, mode := 'delta' ORDER BY t) AS a3, tp_sparkline(list(v ORDER BY t), mode := 'delta') AS b3,
+         tp_sparkline_agg(v, mode := 'trend', theme := 'ascii', width := 50 ORDER BY t) AS a4,
+         tp_sparkline(list(v ORDER BY t), mode := 'trend', theme := 'ascii', width := 50) AS b4
+  FROM series GROUP BY g
+) WHERE a1 = b1 AND a2 = b2 AND a3 = b3 AND a4 = b4;
+----
+3
+
+query T
+SELECT tp_sparkline_agg(v, width := 8 ORDER BY t) FROM (VALUES (1, 1.0), (2, 2.0), (3, 3.0), (4, 4.0)) AS d(t, v);
+----
+  ▃▃▅▅██
+
+# ORDER BY controls the plotted order.
+query T
+SELECT '[' || tp_sparkline_agg(v, width := 8 ORDER BY t DESC) || ']' FROM (VALUES (1, 1.0), (2, 2.0), (3, 3.0), (4, 4.0)) AS d(t, v);
+----
+[██▅▅▃▃  ]
+
+query T
+SELECT tp_sparkline_agg(v, mode := 'delta', width := 3 ORDER BY t) FROM (VALUES (1, 1.0), (2, 2.0), (3, 2.0), (4, 1.0)) AS d(t, v);
+----
+↑→↓
+
+# Integer and decimal inputs are cast to DOUBLE.
+query T
+SELECT tp_sparkline_agg(t, width := 4 ORDER BY t) = tp_sparkline_agg(t::DECIMAL(10, 2), width := 4 ORDER BY t) FROM range(10) r(t);
+----
+true
+
+# Per-group results with GROUP BY.
+query IT
+SELECT g, tp_sparkline_agg(v, width := 5, theme := 'ascii_basic' ORDER BY t) FROM series GROUP BY g ORDER BY g;
+----
+0	*+.%+
+1	+.%+=
+2	.%+=#
+
+# ------------------------------------------------------------------
+# NULL / NaN / Inf / empty groups
+# ------------------------------------------------------------------
+
+# No rows, or only NULL: NULL like other aggregates.
+query T
+SELECT tp_sparkline_agg(v) FROM (SELECT 1.0 AS v) WHERE false;
+----
+NULL
+
+query T
+SELECT tp_sparkline_agg(NULL::DOUBLE) FROM range(10);
+----
+NULL
+
+# NULL, NaN and infinities are skipped, like tp_sparkline.
+query T
+SELECT tp_sparkline_agg(v, width := 4 ORDER BY t) = tp_sparkline([1.0, 2.0], width := 4)
+FROM (VALUES (1, 1.0::DOUBLE), (2, NULL), (3, 'nan'::DOUBLE), (4, 'inf'::DOUBLE), (5, '-inf'::DOUBLE), (6, 2.0)) AS d(t, v);
+----
+true
+
+# Only non-finite values: nothing to plot, an empty string (as tp_sparkline(['nan']) gives).
+query T
+SELECT '[' || tp_sparkline_agg(v) || ']' FROM (VALUES ('nan'::DOUBLE), ('inf'::DOUBLE)) AS d(v);
+----
+[]
+
+# Delta/trend need two values.
+query T
+SELECT '[' || tp_sparkline_agg(1.0, mode := 'trend') || ']';
+----
+[]
+
+# ------------------------------------------------------------------
+# Many rows: parallel combine, a large state, the widest output
+# ------------------------------------------------------------------
+
+query IT
+SELECT strlen(s), s = (SELECT tp_sparkline(list(r::DOUBLE ORDER BY r), width := 1000) FROM range(500000) t(r))
+FROM (SELECT tp_sparkline_agg(r, width := 1000 ORDER BY r) AS s FROM range(500000) t(r));
+----
+2874	true
+
+query I
+SELECT strlen(tp_sparkline_agg(r, width := 1000000 ORDER BY r)) FROM range(3) t(r);
+----
+2333332
+
+# Deterministic across many parallel runs.
+query I
+SELECT count(DISTINCT s) FROM (
+  SELECT (SELECT tp_sparkline_agg(r % 97, width := 40 ORDER BY r) FROM range(200000) t(r)) AS s FROM range(20)
+);
+----
+1
+
+# Works as a window function.
+query IT
+SELECT t, '[' || tp_sparkline_agg(v, width := 3) OVER (ORDER BY t ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) || ']'
+FROM (VALUES (1, 1.0), (2, 2.0), (3, 3.0), (4, 1.0)) AS d(t, v) ORDER BY t;
+----
+1	[▄▄▄]
+2	[  █]
+3	[ ▄█]
+4	[▄█ ]
+
+# ------------------------------------------------------------------
+# Option validation
+# ------------------------------------------------------------------
+
+statement error
+SELECT tp_sparkline_agg(t, width := 0) FROM range(3) r(t);
+----
+tp_sparkline_agg: 'width' argument must be at least 1
+
+statement error
+SELECT tp_sparkline_agg(t, width := 1000001) FROM range(3) r(t);
+----
+tp_sparkline_agg: 'width' argument must be at most
+
+statement error
+SELECT tp_sparkline_agg(t, mode := 'sideways') FROM range(3) r(t);
+----
+tp_sparkline_agg: Unknown type 'sideways'
+
+statement error
+SELECT tp_sparkline_agg(t, mode := 'delta', theme := 'utf8_blocks') FROM range(3) r(t);
+----
+tp_sparkline_agg: Unknown theme 'utf8_blocks' for mode 'delta'
+
+statement error
+SELECT tp_sparkline_agg(t, colour := 'red') FROM range(3) r(t);
+----
+
+statement error
+SELECT tp_sparkline_agg(t, width := t) FROM range(3) r(t);
+----
+
+statement error
+SELECT tp_sparkline_agg('abc');
+----

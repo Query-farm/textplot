@@ -6,6 +6,7 @@
 #include "duckdb.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
 #include "query_farm_telemetry.hpp"
 
 namespace duckdb {
@@ -29,6 +30,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 		                 "tp_bar(75, min := 0, max := 100, thresholds := "
 		                 "[{'threshold': 80, 'color': 'red'}, "
 		                 "{'threshold': 50, 'color': 'yellow'}])"};
+		desc.categories = {"visualization"};
 		info.descriptions.push_back(std::move(desc));
 
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -49,6 +51,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 			desc.examples = {"tp_qr('https://duckdb.org')", "tp_qr('https://example.com', ecc := 'high')",
 			                 "tp_qr('Hello, world!', \"on\" := '##', off := '  ')",
 			                 "tp_qr('\\xDE\\xAD\\xBE\\xEF'::BLOB)"};
+			desc.categories = {"visualization", "qr"};
 			info.descriptions.push_back(std::move(desc));
 		}
 
@@ -72,6 +75,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], marker := '|', marker_value := 4.0)",
 		                 "tp_density([1.0, 2.0, 3.0, 4.0, 5.0], "
 		                 "style := 'rainbow_square', width := 30)"};
+		desc.categories = {"visualization"};
 		info.descriptions.push_back(std::move(desc));
 
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -93,7 +97,30 @@ static void LoadInternal(ExtensionLoader &loader) {
 		                 "tp_sparkline([1.0, 2.0, 3.0, 4.0, 5.0], "
 		                 "mode := 'absolute', theme := 'utf8_blocks')",
 		                 "tp_sparkline([1.0, 5.0, 3.0, 8.0, 6.0], "
-		                 "mode := 'trend', theme := 'faces')"};
+		                 "mode := 'trend', theme := 'faces')",
+		                 "tp_sparkline(list(v ORDER BY t)) FROM (VALUES (1, 3.0), (2, 1.0), (3, 4.0)) AS d(t, v)"};
+		desc.categories = {"visualization"};
+		info.descriptions.push_back(std::move(desc));
+
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		loader.RegisterFunction(std::move(info));
+	}
+
+	// tp_sparkline_agg: aggregate form of tp_sparkline
+	{
+		CreateAggregateFunctionInfo info(TextplotSparklineAggFunction());
+
+		FunctionDescription desc;
+		desc.description = "Aggregate form of tp_sparkline: collects the numeric values of a group and renders them "
+		                   "as a sparkline, in the order given by an ORDER BY inside the call, placed after any "
+		                   "options (input order otherwise, which is not guaranteed). Takes the same width, mode "
+		                   "and theme options as tp_sparkline. NULL, NaN and infinite values are skipped; returns "
+		                   "NULL for a group with no non-NULL values.";
+		desc.examples = {"tp_sparkline_agg(v ORDER BY t) FROM (VALUES (1, 3.0), (2, 1.0), (3, 4.0)) AS d(t, v)",
+		                 "tp_sparkline_agg(sin(t / 10.0), width := 10 ORDER BY t) FROM range(100) AS r(t)",
+		                 "tp_sparkline_agg(v, mode := 'delta', theme := 'arrows' ORDER BY t) "
+		                 "FROM (VALUES (1, 1.0), (2, 2.0), (3, 1.0)) AS d(t, v)"};
+		desc.categories = {"visualization", "aggregate"};
 		info.descriptions.push_back(std::move(desc));
 
 		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;

@@ -1,0 +1,41 @@
+# name: test/sql/textplot_metadata.test
+# description: every textplot function documents itself in duckdb_functions()
+# group: [sql]
+
+require textplot
+
+query IIT
+SELECT function_name, function_type, categories FROM duckdb_functions()
+WHERE function_name LIKE 'tp\_%' ESCAPE '\'
+ORDER BY ALL;
+----
+tp_bar	scalar	[visualization]
+tp_density	scalar	[visualization]
+tp_qr	scalar	[visualization, qr]
+tp_qr	scalar	[visualization, qr]
+tp_sparkline	scalar	[visualization]
+tp_sparkline_agg	aggregate	[visualization, aggregate]
+
+# No overload lacks a description, an example, a category or real parameter names.
+query I
+SELECT count(*) FROM duckdb_functions()
+WHERE function_name LIKE 'tp\_%' ESCAPE '\'
+  AND (description IS NULL OR description = ''
+       OR examples IS NULL OR len(examples) = 0
+       OR categories IS NULL OR len(categories) = 0
+       OR parameters IS NULL OR len(parameters) = 0
+       OR list_bool_or(list_transform(parameters, lambda p: p IS NULL OR p = '' OR regexp_matches(p, '^col[0-9]+$'))));
+----
+0
+
+query II
+SELECT parameters, parameter_types FROM duckdb_functions() WHERE function_name = 'tp_sparkline_agg';
+----
+[value, width, mode, theme]	[DOUBLE, BIGINT, VARCHAR, VARCHAR]
+
+# Every overload carries its examples (check-examples in the docs repo runs each one).
+query I
+SELECT count(*) FROM duckdb_functions(), unnest(examples) AS e(example)
+WHERE function_name LIKE 'tp\_%' ESCAPE '\';
+----
+28

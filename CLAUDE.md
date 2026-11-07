@@ -29,7 +29,7 @@ When making changes the version should always be updated to the current date plu
 ## Architecture
 
 ### Extension Entry Point
-- `src/textplot_extension.cpp` - Registers all scalar functions with DuckDB via `LoadInternal()`
+- `src/textplot_extension.cpp` - Registers all functions (with description, examples and categories) via `LoadInternal()`; the extension version string lives in `TextplotExtension::Version()`
 
 ### SQL Functions
 Each visualization function has a corresponding implementation file:
@@ -39,6 +39,7 @@ Each visualization function has a corresponding implementation file:
 | `tp_bar()` | `textplot_bar.cpp/.hpp` | Horizontal bar charts with thresholds and colors |
 | `tp_density()` | `textplot_density.cpp/.hpp` | Density plots/histograms from arrays |
 | `tp_sparkline()` | `textplot_sparkline.cpp/.hpp` | Compact trend lines with multiple modes |
+| `tp_sparkline_agg()` | `textplot_sparkline.cpp/.hpp` | Aggregate form of `tp_sparkline` (`tp_sparkline_agg(v, width := 20 ORDER BY t)`) |
 | `tp_qr()` | `textplot_qr.cpp/.hpp` | QR code generation |
 
 ### Pattern
