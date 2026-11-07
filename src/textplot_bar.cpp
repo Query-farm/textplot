@@ -243,7 +243,7 @@ void TextplotBar(DataChunk &args, ExpressionState &state, Vector &result) {
 			// Avoid division by zero: if value equals min/max, show full bar; otherwise empty
 			proportion = (value >= bind_data.min) ? 1.0 : 0.0;
 		} else {
-			proportion = std::clamp((value - bind_data.min) / (bind_data.max - bind_data.min), 0.0, 1.0);
+			proportion = TextplotFraction(value, bind_data.min, bind_data.max);
 		}
 		// proportion is in [0, 1] and width is capped at bind time, so this cannot overflow.
 		const auto filled_blocks = static_cast<int64_t>(std::round(static_cast<double>(bind_data.width) * proportion));

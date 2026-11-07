@@ -140,13 +140,21 @@ std::string generateAbsoluteSparkline(const double *data, int64_t size, int64_t 
 		if (end_idx > size)
 			end_idx = size;
 
+		const auto bucket_size = static_cast<double>(end_idx - start_idx);
 		double sum = 0.0;
 		for (int64_t j = start_idx; j < end_idx; j++) {
 			sum += data[j];
 		}
-		double avg_val = sum / static_cast<double>(end_idx - start_idx);
+		double avg_val = sum / bucket_size;
+		if (!Value::DoubleIsFinite(avg_val)) {
+			// The sum of values near the double limit overflowed; average without the intermediate sum.
+			avg_val = 0.0;
+			for (int64_t j = start_idx; j < end_idx; j++) {
+				avg_val += data[j] / bucket_size;
+			}
+		}
 
-		double normalized = (avg_val - min_val) / (max_val - min_val);
+		const double normalized = TextplotFraction(avg_val, min_val, max_val);
 		auto level = static_cast<int64_t>(std::round(normalized * static_cast<double>(max_level)));
 		level = std::max(static_cast<int64_t>(0), std::min(max_level, level));
 

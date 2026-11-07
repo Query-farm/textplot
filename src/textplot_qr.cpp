@@ -98,9 +98,18 @@ void TextplotQR(DataChunk &args, ExpressionState &state, Vector &result) {
 		// embedded NUL. Use byte mode for those inputs (and for BLOB) to encode the whole payload;
 		// plain text keeps the denser numeric/alphanumeric segment modes.
 		const auto use_binary = bind_data.binary || text.find('\0') != std::string::npos;
-		const auto qr =
-		    use_binary ? qrcodegen::QrCode::encodeBinary(std::vector<std::uint8_t>(text.begin(), text.end()), ecc_level)
-		               : qrcodegen::QrCode::encodeText(text.c_str(), ecc_level);
+		const auto qr = [&]() {
+			try {
+				return use_binary ? qrcodegen::QrCode::encodeBinary(std::vector<std::uint8_t>(text.begin(), text.end()),
+				                                                    ecc_level)
+				                  : qrcodegen::QrCode::encodeText(text.c_str(), ecc_level);
+			} catch (const qrcodegen::data_too_long &) {
+				throw InvalidInputException(
+				    "tp_qr: data of %llu bytes is too long for a QR code at ecc level '%s' (the largest QR code "
+				    "holds at most 2953 bytes at 'low'; use a lower 'ecc' level or shorter data)",
+				    static_cast<unsigned long long>(text.size()), bind_data.ecc);
+			}
+		}();
 
 		const auto size = qr.getSize();
 		string result_str;

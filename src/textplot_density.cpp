@@ -178,18 +178,26 @@ void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		// Create histogram bins
 		std::vector<int> bins(bind_data.width, 0);
-		const double range = maxVal - minVal;
-		const double binWidth = range / bind_data.width;
+		// When maxVal - minVal overflows a double, work on halved values so the bins stay meaningful.
+		const double scale = Value::DoubleIsFinite(maxVal - minVal) ? 1.0 : 0.5;
+		const double scaledMin = minVal * scale;
+		const double range = maxVal * scale - scaledMin;
+		const double binWidth = range / static_cast<double>(bind_data.width);
+		const auto binOf = [&](double val) -> int64_t {
+			const double pos = (val * scale - scaledMin) / binWidth;
+			// Clamp before converting: an out-of-range or NaN double cast to an integer is undefined.
+			if (!(pos >= 0.0)) {
+				return 0;
+			}
+			if (pos >= static_cast<double>(bind_data.width)) {
+				return bind_data.width - 1;
+			}
+			return static_cast<int64_t>(pos);
+		};
 
 		// Count values in each bin
 		for (const double val : data_items) {
-			auto binIndex = static_cast<int>((val - minVal) / binWidth);
-			// Clamp to valid range to handle floating point edge cases
-			if (binIndex < 0)
-				binIndex = 0;
-			if (binIndex >= bind_data.width)
-				binIndex = bind_data.width - 1;
-			bins[binIndex]++;
+			bins[binOf(val)]++;
 		}
 
 		// Find max count for scaling
@@ -207,7 +215,7 @@ void TextplotDensity(DataChunk &args, ExpressionState &state, Vector &result) {
 		// Determine marker position if specified
 		int64_t markerPos = -1;
 		if (bind_data.HasMarker() && bind_data.marker_value >= minVal && bind_data.marker_value <= maxVal) {
-			markerPos = static_cast<int64_t>((bind_data.marker_value - minVal) / binWidth);
+			markerPos = binOf(bind_data.marker_value);
 			// Clamp to valid range to handle floating point edge cases
 			if (markerPos < 0)
 				markerPos = 0;

@@ -1,0 +1,141 @@
+# name: test/sql/textplot_robustness.test
+# description: extreme widths, extreme values, empty/all-NULL input and Unicode cell strings
+# group: [sql]
+
+require textplot
+
+# ------------------------------------------------------------------
+# The widest allowed output, for every function and mode
+# ------------------------------------------------------------------
+
+query IIIIII
+SELECT strlen(tp_bar(0.5, width := 1000000)),
+       strlen(tp_density([1.0, 2.0, 3.0], width := 1000000)),
+       strlen(tp_sparkline([1.0, 2.0, 3.0], width := 1000000)),
+       strlen(tp_sparkline([1.0, 2.0, 3.0], width := 1000000, mode := 'delta')),
+       strlen(tp_sparkline([1.0, 2.0, 3.0], width := 1000000, mode := 'trend', theme := 'faces')),
+       strlen(tp_bar(0.5, width := 1000000, "on" := repeat('x', 256), off := repeat('y', 256)));
+----
+3500000	1000006	2333332	3000000	4000000	256000000
+
+# A wide plot over a single value, and over many values with a width of 1.
+query II
+SELECT strlen(tp_sparkline([5.0], width := 1000000)), tp_sparkline(list(r::DOUBLE), width := 1) FROM range(100000) t(r);
+----
+3000000	▄
+
+query T
+SELECT tp_density(list(r::DOUBLE), width := 1) FROM range(100000) t(r);
+----
+█
+
+# ------------------------------------------------------------------
+# Empty and all-NULL input, from literals and from table columns
+# ------------------------------------------------------------------
+
+statement ok
+CREATE TABLE lists AS SELECT * FROM (VALUES
+  (1, []::DOUBLE[]),
+  (2, [NULL, NULL]::DOUBLE[]),
+  (3, NULL::DOUBLE[]),
+  (4, ['nan', 'inf', '-inf']::DOUBLE[]),
+  (5, [1.0, NULL, 3.0])
+) AS t(id, xs);
+
+query ITTTT
+SELECT id, '[' || tp_sparkline(xs, width := 3) || ']', '[' || tp_sparkline(xs, width := 3, mode := 'delta') || ']',
+       '[' || tp_sparkline(xs, width := 3, mode := 'trend') || ']', '[' || tp_density(xs, width := 3) || ']'
+FROM lists ORDER BY id;
+----
+1	[]	[]	[]	[]
+2	[]	[]	[]	[]
+3	NULL	NULL	NULL	NULL
+4	[]	[]	[]	[]
+5	[  █]	[↑↑↑]	[↑↑↑]	[█ █]
+
+# ------------------------------------------------------------------
+# Extreme values: max - min overflowing a double must not collapse the plot or hit undefined behaviour
+# ------------------------------------------------------------------
+
+query T
+SELECT tp_sparkline([-1.7e308, 1.7e308, 0.0], width := 3);
+----
+ █▄
+
+query T
+SELECT tp_density([-1.7e308, 0.0, 1.7e308], width := 3);
+----
+███
+
+query T
+SELECT tp_density([-1.7e308, 1.7e308], width := 4, marker_value := 0.0, marker := '|');
+----
+█ |█
+
+query TT
+SELECT tp_bar(1.7e308, min := -1.7e308, max := 1.7e308, width := 4), tp_bar(0.0, min := -1.7e308, max := 1.7e308, width := 4);
+----
+🟥🟥🟥🟥	🟥🟥⬜⬜
+
+# Averaging values near the double limit must not overflow either.
+query T
+SELECT '[' || tp_sparkline([1.7e308, 1.7e308, 0.0, 0.0], width := 2) || ']';
+----
+[█ ]
+
+query T
+SELECT tp_sparkline([-1.7e308, 1.7e308, -1.7e308, 1.7e308], width := 4, mode := 'trend');
+----
+↑↑↓↑
+
+# Infinite and huge tp_bar values clamp to the ends of the bar.
+query TTT
+SELECT tp_bar('inf'::DOUBLE, width := 3), tp_bar('-inf'::DOUBLE, width := 3), tp_bar(1e308, width := 3);
+----
+🟥🟥🟥	⬜⬜⬜	🟥🟥🟥
+
+# Subnormal values still spread across the plot.
+query TT
+SELECT tp_sparkline([1e-320, 2e-320, 3e-320], width := 3), tp_density([1e-320, 2e-320, 3e-320], width := 3);
+----
+ ▄█	███
+
+# ------------------------------------------------------------------
+# Unicode cell strings and payloads
+# ------------------------------------------------------------------
+
+query T
+SELECT tp_bar(0.5, width := 6, "on" := '日本', off := '🦆');
+----
+日本日本日本🦆🦆🦆
+
+query T
+SELECT tp_bar(0.5, width := 4, "on" := '👩‍👩‍👧', off := 'é');
+----
+👩‍👩‍👧👩‍👩‍👧éé
+
+query T
+SELECT tp_density([1.0, 2.0, 3.0], width := 3, marker_value := 2.0, marker := '🦆');
+----
+█🦆█
+
+query T
+SELECT tp_qr('日本語 🦆 ünïcödé') = tp_qr(encode('日本語 🦆 ünïcödé'));
+----
+true
+
+# The largest payload a QR code can hold works; one byte more is a clear error, not a crash.
+query I
+SELECT strlen(tp_qr(repeat('x', 2953)::BLOB, "on" := '#', off := '.'));
+----
+31506
+
+statement error
+SELECT tp_qr(repeat('x', 2954)::BLOB);
+----
+tp_qr: data of 2954 bytes is too long for a QR code at ecc level 'low'
+
+statement error
+SELECT tp_qr(repeat('x', 2000), ecc := 'high');
+----
+too long for a QR code at ecc level 'high'

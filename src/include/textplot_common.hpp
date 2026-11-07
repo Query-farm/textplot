@@ -22,6 +22,24 @@ static constexpr idx_t TEXTPLOT_MAX_CELL_BYTES = 256;
 //! Throws ParameterNotResolvedException for an unresolved prepared statement parameter.
 bool TextplotIsNumericList(const LogicalType &type);
 
+//! Position of `value` within [min, max] as a fraction clamped to [0, 1]. Requires finite min < max.
+//! When max - min overflows a double (e.g. min = -1e308, max = 1e308) the computation is done on halved
+//! values instead, so the result stays meaningful rather than becoming 0 or NaN; a NaN result (which would
+//! be undefined behaviour once rounded to an integer level) is mapped to 0.
+inline double TextplotFraction(double value, double min, double max) {
+	double fraction;
+	const double range = max - min;
+	if (Value::DoubleIsFinite(range)) {
+		fraction = (value - min) / range;
+	} else {
+		fraction = (value / 2 - min / 2) / (max / 2 - min / 2);
+	}
+	if (!(fraction >= 0.0)) {
+		return 0.0;
+	}
+	return fraction > 1.0 ? 1.0 : fraction;
+}
+
 //! Validates 'width' at bind time, raising a BinderException when out of range.
 void TextplotValidateWidth(const string &function_name, int64_t width);
 
